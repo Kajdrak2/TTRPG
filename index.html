@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>JDR Studio — Port Patch 5.7</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+  <header class="row topbar">
+    <h1>JDR Studio <span class="muted">— Port Patch 5.7</span></h1>
+    <div class="row gap">
+      <div class="pill">Partie: <span id="gameId"></span></div>
+      <div class="pill" id="rolePill">Rôle:
+        <select id="roleSel" class="select">
+          <option value="admin">admin</option>
+          <option value="player">player</option>
+        </select>
+      </div>
+      <div class="pill" id="viewPill">Vue:
+        <select id="viewSel" class="select">
+          <option value="admin">admin</option>
+          <option value="player">player</option>
+        </select>
+      </div>
+      <button id="exportBtn" class="btn">Exporter (.json)</button>
+      <label class="btn">
+        Importer <input type="file" id="importFile" accept=".json" hidden/>
+      </label>
+    </div>
+  </header>
+
+  <main id="app" class="container"></main>
+
+  <!-- Bouton flottant pour basculer admin/joueur -->
+  <button id="viewToggle" class="fab" title="Basculer de vue"></button>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
