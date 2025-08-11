@@ -1,5 +1,6 @@
-// TTRPG/js/views/admin_timers.js — Build 3
-// Fix: no ESM import (avoids path/MIME pitfalls). Uses global window.State (as core/state.js exposes save/timer* & master*).
+// TTRPG/js/views/admin_timers.js — Build 4
+// Fixes: ESM-safe but *no* in-file imports. Uses global window.State to avoid dev-server MIME hiccups.
+// Make sure js/core/state.js is included before this file in your HTML/app loader.
 
 const State = (typeof window!=='undefined' && window.State) ? window.State : null;
 const el = (t, cls)=>{ const n=document.createElement(t); if(cls) n.className=cls; return n; };

@@ -1,7 +1,12 @@
-// TTRPG/js/views/admin_bestiaire.js — Build 4
-// - Grouped panels: Stats, Catégories, Ressources (base + /niveau dans le même encart)
-// - Stats key = vraie liste (select) + option "Autre…"
-// - Inheritance: auto-choix premier élément quand activé sans id
+// TTRPG/js/views/admin_bestiaire.js — Build 9
+// Focus: branch catalogs to *actual* state.js shapes + robust inheritance.
+// - Stats catalog: prefers S.settings.characteristics if exists; otherwise union of keys
+//   found in Races/Tribes/Classes/Items/Effects (mods.stats + common aliases).
+// - Categories catalog: prefers S.settings.categories; fallback: union of mods.cats seen.
+// - Resources catalog: prefers S.resources (array/objs); fallback: union of mods.resources keys.
+// - Inheritance: supports {stats,cats,resources} and {mods.{...}} plus *PerLevel variants.
+// - UI unchanged (grouped editors, groups, split Création/Modèles).
+
 /* ====================== Utils ====================== */
 const el = (t, cls) => { const n=document.createElement(t); if(cls) n.className=cls; return n; };
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
@@ -13,6 +18,7 @@ const stanceFromDisposition=(d,thr)=> d>=thr.friendly?'amical':(d<=thr.hostile?'
 function ensureSchema(S){
   if(!Array.isArray(S.enemiesTemplates)) S.enemiesTemplates=[];
   if(!Array.isArray(S.enemies)) S.enemies=[];
+  if(!Array.isArray(S.enemyGroups)) S.enemyGroups=[];
   if(!S.attitudeThresholds || typeof S.attitudeThresholds!=='object'){
     S.attitudeThresholds = { friendly:30, hostile:-30 };
   }
@@ -22,93 +28,138 @@ function ensureSchema(S){
   return S;
 }
 
-/* ====================== Catalogs ====================== */
-function getStatsCatalog(S){
-  const fromCfg = []
-    .concat(S?.statsList||[])
-    .concat(S?.characteristics||[])
-    .concat(S?.config?.stats||[])
-    .filter(Boolean)
-    .map(x=> typeof x==='string'? x : (x?.key||x?.id||x?.name))
-    .filter(Boolean);
-  const defaults = ['FOR','DEX','CON','AGI','VIT','INT','SAG','CHA','INIT','ATK','DEF','MAG','RES','ESQ','CRIT','SPD'];
-  const buckets = [
-    ...(S.races||[]), ...(S.tribes||[]), ...(S.classes||[]),
-    ...(S.enemiesTemplates||[]), ...(S.enemies||[])
-  ];
-  const harvested = new Set();
-  buckets.forEach(b=>{
-    if(b?.stats) Object.keys(b.stats).forEach(k=> harvested.add(k));
-    if(b?.statsPerLevel) Object.keys(b.statsPerLevel).forEach(k=> harvested.add(k));
-    if(b?.localMods?.add) Object.keys(b.localMods.add).forEach(k=> harvested.add(k));
-    if(b?.localMods?.mult) Object.keys(b.localMods.mult).forEach(k=> harvested.add(k));
-    if(Array.isArray(b?.effects)) b.effects.forEach(e=>{
-      if(e?.add) Object.keys(e.add).forEach(k=> harvested.add(k));
-      if(e?.mult) Object.keys(e.mult).forEach(k=> harvested.add(k));
-      if(e?.override) Object.keys(e.override).forEach(k=> harvested.add(k));
+/* ====================== Catalogs (STRICT from state) ====================== */
+const asKeyList = (arr)=>{
+  if(!arr) return [];
+  if(Array.isArray(arr)) return arr.map(x=> typeof x==='string' ? x : (x?.key||x?.id||x?.name||x?.label) ).filter(Boolean);
+  if(typeof arr==='object') return Object.keys(arr);
+  return [];
+};
+const uniq = a => Array.from(new Set(a));
+const sort = a => a.slice().sort((x,y)=> String(x).localeCompare(String(y), 'fr'));
+
+function unionStatKeysFromArray(arr){
+  const out=[];
+  (arr||[]).forEach(o=>{
+    if(!o||typeof o!=='object') return;
+    [o.stats, o.characteristics, o.baseStats, o.attrs, o?.mods?.stats, o?.bonus?.stats].forEach(s=>{
+      if(s && typeof s==='object') out.push(...Object.keys(s));
     });
   });
-  const out = new Set();
-  [...fromCfg, ...defaults, ...harvested].forEach(k=>{ if(k && typeof k==='string') out.add(k); });
-  return [...out];
+  return out;
+}
+function unionCatKeysFromArray(arr){
+  const out=[];
+  (arr||[]).forEach(o=>{
+    if(!o||typeof o!=='object') return;
+    [o.cats, o.categories, o?.mods?.cats].forEach(s=>{ if(s && typeof s==='object') out.push(...Object.keys(s)); });
+  });
+  return out;
+}
+function unionResKeysFromArray(arr){
+  const out=[];
+  (arr||[]).forEach(o=>{
+    if(!o||typeof o!=='object') return;
+    [o.resources, o.res, o.pools, o?.mods?.resources].forEach(r=>{
+      if(r && typeof r==='object') out.push(...Object.keys(r));
+    });
+  });
+  return out;
 }
 
-/* ====================== Inheritance & calc ====================== */
-function mergeNum(dst, src){
-  if(!src) return;
-  if(Array.isArray(src)){
-    src.forEach(e=>{
-      if(Array.isArray(e) && e.length>=2){ const k=String(e[0]); dst[k]=(dst[k]||0)+N(e[1]); }
-      else if(e && typeof e==='object'){ const k=e.name||e.key||e.id; if(!k) return; const v=N(e.value ?? e.delta ?? e.v ?? e.amount); dst[k]=(dst[k]||0)+v; }
-    });
-  }else if(typeof src==='object'){
-    Object.keys(src).forEach(k=>{
-      const v=src[k];
-      if(v && typeof v==='object' && 'value' in v) dst[k]=(dst[k]||0)+N(v.value);
-      else dst[k]=(dst[k]||0)+N(v);
-    });
-  }
+function getStatsCatalog(S){
+  // Prefer a dedicated list if present
+  const direct = asKeyList(S?.settings?.characteristics);
+  if(direct.length) return sort(uniq(direct));
+
+  // Else derive from data actually defined in modules (races/tribes/classes/items/effects)
+  const keys = [
+    ...unionStatKeysFromArray(S.races),
+    ...unionStatKeysFromArray(S.tribes),
+    ...unionStatKeysFromArray(S.classes),
+    ...unionStatKeysFromArray(S.items),
+    ...(S.effects||[]).flatMap(e => Object.keys(e?.mods?.stats||{}))
+  ];
+  return sort(uniq(keys));
 }
-function mergeRes(dst, src){
-  if(!src) return;
-  if(Array.isArray(src)){
-    src.forEach(e=>{
-      if(Array.isArray(e) && e.length>=2){
-        const k=String(e[0]); const v=e[1]; const d = dst[k]||(dst[k]={max:0,start:0});
-        if(v && typeof v==='object'){ d.max+=N(v.max); d.start+=N(v.start); } else { d.max+=N(v); }
-        if(d.start>d.max) d.start=d.max;
-      }else if(e && typeof e==='object'){
-        const k=e.name||e.key||e.id; if(!k) return;
-        const d = dst[k]||(dst[k]={max:0,start:0});
-        if('max' in e || 'start' in e){ d.max+=N(e.max); d.start+=N(e.start); }
-        else if('value' in e || 'delta' in e || 'v' in e || 'amount' in e){ d.max+=N(e.value ?? e.delta ?? e.v ?? e.amount); }
-        if(d.start>d.max) d.start=d.max;
-      }
-    });
-  }else if(typeof src==='object'){
-    Object.keys(src).forEach(k=>{
-      const v=src[k]; const d = dst[k]||(dst[k]={max:0,start:0});
-      if(v && typeof v==='object'){ d.max+=N(v.max); d.start+=N(v.start); } else { d.max+=N(v); }
-      if(d.start>d.max) d.start=d.max;
-    });
-  }
+function getCatsCatalog(S){
+  const direct = asKeyList(S?.settings?.categories);
+  if(direct.length) return sort(uniq(direct));
+
+  const keys = [
+    ...unionCatKeysFromArray(S.races),
+    ...unionCatKeysFromArray(S.tribes),
+    ...unionCatKeysFromArray(S.classes),
+    ...unionCatKeysFromArray(S.items),
+    ...(S.effects||[]).flatMap(e => Object.keys(e?.mods?.cats||{}))
+  ];
+  return sort(uniq(keys));
 }
-function applyFlatAdd(stats, cats, res, src){
-  const m = src?.mods;
-  mergeNum(stats, src?.statsMods || src?.stats || m?.stats || m?.statsMods);
-  mergeNum(cats , src?.catsMods  || src?.categories || m?.cats  || m?.categories);
-  mergeRes(res   , src?.resourcesMods || src?.resources || m?.resources || m?.resourcesMods);
+function getResCatalog(S){
+  const direct = asKeyList(S?.resources);
+  if(direct.length) return sort(uniq(direct));
+
+  const keys = [
+    ...unionResKeysFromArray(S.races),
+    ...unionResKeysFromArray(S.tribes),
+    ...unionResKeysFromArray(S.classes),
+    ...unionResKeysFromArray(S.items),
+    ...(S.effects||[]).flatMap(e => Object.keys(e?.mods?.resources||{}))
+  ];
+  return sort(uniq(keys));
 }
 
+/* ====================== Inheritance helpers ====================== */
+function findByIdOrName(arr,id){
+  if(!arr) return null;
+  const sid = String(id||'');
+  return arr.find(x=> String(x?.id||'')===sid) || arr.find(x=> String(x?.name||'')===sid) || null;
+}
+function extractBaseAndPerLevel(src){
+  const r = { stats:{}, statsPerLevel:{}, cats:{}, catsPerLevel:{}, res:{}, resPerLevel:{} };
+  if(!src || typeof src!=='object') return r;
+
+  // Accept a wide set of shapes
+  const candStats   = [src.stats, src.characteristics, src.baseStats, src.attrs, src?.mods?.stats];
+  const candStatsPL = [src.statsPerLevel, src.perLevelStats, src.statsLvl, src.levelStats, src.stats_per_level, src?.modsPerLevel?.stats, src?.mods?.statsPerLevel];
+  const candCats    = [src.cats, src.categories, src?.mods?.cats];
+  const candCatsPL  = [src.catsPerLevel, src.categoriesPerLevel, src?.modsPerLevel?.cats, src?.mods?.catsPerLevel];
+  const candRes     = [src.resources, src.res, src.pools, src?.mods?.resources];
+  const candResPL   = [src.resourcesPerLevel, src.resPerLevel, src?.modsPerLevel?.resources, src?.mods?.resourcesPerLevel];
+
+  candStats.forEach(o=>{ if(o && typeof o==='object') Object.keys(o).forEach(k=> r.stats[k]=N(o[k])); });
+  candStatsPL.forEach(o=>{ if(o && typeof o==='object') Object.keys(o).forEach(k=> r.statsPerLevel[k]=N(o[k])); });
+  candCats.forEach(o=>{ if(o && typeof o==='object') Object.keys(o).forEach(k=> r.cats[k]=N(o[k])); });
+  candCatsPL.forEach(o=>{ if(o && typeof o==='object') Object.keys(o).forEach(k=> r.catsPerLevel[k]=N(o[k])); });
+  candRes.forEach(o=>{ if(o && typeof o==='object') Object.keys(o).forEach(k=>{ const v=o[k]; r.res[k] = v&&typeof v==='object' ? {max:N(v.max),start:N(v.start)} : {max:N(v),start:0}; }); });
+  candResPL.forEach(o=>{ if(o && typeof o==='object') Object.keys(o).forEach(k=>{ const v=o[k]; r.resPerLevel[k] = v&&typeof v==='object' ? {max:N(v.max),start:N(v.start)} : {max:N(v),start:0}; }); });
+  return r;
+}
+function applyExtract(dstStats, dstCats, dstRes, extract, Lm1){
+  Object.keys(extract.stats).forEach(k=> dstStats[k]=(dstStats[k]||0)+extract.stats[k]);
+  Object.keys(extract.statsPerLevel).forEach(k=> dstStats[k]=(dstStats[k]||0)+extract.statsPerLevel[k]*Lm1);
+  Object.keys(extract.cats).forEach(k=> dstCats[k]=(dstCats[k]||0)+extract.cats[k]);
+  Object.keys(extract.catsPerLevel).forEach(k=> dstCats[k]=(dstCats[k]||0)+extract.catsPerLevel[k]*Lm1);
+  Object.keys(extract.res).forEach(k=>{
+    const b = dstRes[k]||(dstRes[k]={max:0,start:0}); const v = extract.res[k];
+    b.max+=N(v.max); b.start+=N(v.start); if(b.start>b.max) b.start=b.max;
+  });
+  Object.keys(extract.resPerLevel).forEach(k=>{
+    const b = dstRes[k]||(dstRes[k]={max:0,start:0}); const v = extract.resPerLevel[k];
+    b.max+=N(v.max)*Lm1; b.start+=N(v.start)*Lm1; if(b.start>b.max) b.start=b.max;
+  });
+}
+
+/* ====================== Calc: template -> preview ====================== */
 function calcPreviewFromTemplate(tpl, level, S){
   const lvl = Math.max(1, Math.floor(+level||tpl.level||1));
+  const Lm1 = (lvl-1);
   const stats = {...(tpl.stats||{})};
   const cats  = {...(tpl.cats||{})};
   const res   = JSON.parse(JSON.stringify(tpl.resources||{}));
   const spl = tpl.statsPerLevel||{};
   const cpl = tpl.catsPerLevel||{};
   const rpl = tpl.resourcesPerLevel||{};
-  const Lm1 = (lvl-1);
   for(const k in spl) stats[k]=(stats[k]||0)+N(spl[k])*Lm1;
   for(const k in cpl) cats[k]=(cats[k]||0)+N(cpl[k])*Lm1;
   for(const r in rpl){
@@ -119,16 +170,16 @@ function calcPreviewFromTemplate(tpl, level, S){
     res[r]=base;
   }
   if(tpl.useRace){
-    const race = (S.races||[]).find(r=> String(r.id||'')===String(tpl.raceId||''));
-    if(race) applyFlatAdd(stats,cats,res,race);
+    const race = findByIdOrName(S.races||[], tpl.raceId);
+    if(race){ const ex=extractBaseAndPerLevel(race); applyExtract(stats,cats,res,ex,Lm1); }
   }
   if(tpl.useTribe){
-    const tribe = (S.tribes||[]).find(r=> String(r.id||'')===String(tpl.tribeId||''));
-    if(tribe) applyFlatAdd(stats,cats,res,tribe);
+    const tribe = findByIdOrName(S.tribes||[], tpl.tribeId);
+    if(tribe){ const ex=extractBaseAndPerLevel(tribe); applyExtract(stats,cats,res,ex,Lm1); }
   }
   if(tpl.useClass){
-    const klass = (S.classes||[]).find(r=> String(r.id||'')===String(tpl.classId||''));
-    if(klass) applyFlatAdd(stats,cats,res,klass);
+    const klass = findByIdOrName(S.classes||[], tpl.classId);
+    if(klass){ const ex=extractBaseAndPerLevel(klass); applyExtract(stats,cats,res,ex,Lm1); }
   }
   return { level:lvl, stats, cats, resources:res };
 }
@@ -172,31 +223,24 @@ function accordion(title, open=true){
   head.style.cursor='pointer';
   head.addEventListener('click',()=>{ body.style.display = (body.style.display==='none'?'block':'none'); });
   wrap.append(head, body);
-  return {wrap, body};
+  return {wrap, body, head};
 }
 
-// Chooser for stat key (select + "Autre…")
-function makeKeyChooser(catalog=[], placeholder='stat'){
+function makeKeyChooser(catalog=[], placeholder='clé'){
   const wrap = el('div','row'); wrap.style.gap='6px'; wrap.style.flexWrap='wrap';
   const sel = el('select','input');
-  const custom = el('input','input'); custom.placeholder=placeholder; custom.style.display='none'; custom.style.minWidth='140px';
-  const OTHER='__other__';
   (catalog||[]).slice().sort().forEach(k=>{ const o=el('option'); o.value=k; o.textContent=k; sel.append(o); });
-  const oOther=el('option'); oOther.value=OTHER; oOther.textContent='Autre…'; sel.append(oOther);
-  sel.onchange=()=>{ custom.style.display = (sel.value===OTHER)? 'inline-block':'none'; };
-  wrap.append(sel, custom);
-  return {
-    wrap,
-    get(){ return sel.value===OTHER ? (custom.value||'').trim() : sel.value; },
-    set(v){ if((catalog||[]).includes(v)){ sel.value=v; custom.style.display='none'; } else { sel.value=OTHER; custom.value=v||''; custom.style.display='inline-block'; } }
-  };
+  wrap.append(sel);
+  return { wrap, get(){ return sel.value; }, set(v){ sel.value=v; } };
 }
 
-/* ===== Grouped editors (base + per-level) ===== */
+/* ===== Grouped editors (base + par niveau) ===== */
 function statsGroupEditor(base, perLevel, onChange, statsCatalog){
   const box = el('div','panel');
-  box.innerHTML = `<div class="list-item"><div><b>Stats</b> <span class="muted small">(base + par niveau)</span></div></div>`;
-  const list = el('div','list'); box.append(list);
+  const acc = accordion('Stats', true);
+  box.append(acc.wrap);
+
+  const list = el('div','list'); acc.body.append(list);
 
   function render(){
     list.innerHTML='';
@@ -214,7 +258,6 @@ function statsGroupEditor(base, perLevel, onChange, statsCatalog){
         saveB.onclick=()=>{ base[k]=N(bI.value); perLevel[k]=N(pI.value); onChange(); render(); };
         del.onclick=()=>{ delete base[k]; delete perLevel[k]; onChange(); render(); };
         row.append(lbl, el('div','muted small'), bI, pI, saveB, del);
-        // small labels
         row.children[1].textContent='base / +par niv';
         list.append(row);
       });
@@ -229,17 +272,18 @@ function statsGroupEditor(base, perLevel, onChange, statsCatalog){
   const clrB=el('button','btn small secondary'); clrB.textContent='Vider';
   addB.onclick=()=>{ const k=chooser.get(); if(!k) return; base[k]=N(baseI.value); perLevel[k]=N(perI.value); onChange(); render(); };
   clrB.onclick=()=>{ Object.keys(base).forEach(k=> delete base[k]); Object.keys(perLevel).forEach(k=> delete perLevel[k]); onChange(); render(); };
+  acc.body.append(form);
   form.append(chooser.wrap, baseI, perI, addB, clrB);
-  box.append(form);
 
   render();
   return box;
 }
 
-function catsGroupEditor(base, perLevel, onChange){
+function catsGroupEditor(base, perLevel, onChange, catsCatalog){
   const box = el('div','panel');
-  box.innerHTML = `<div class="list-item"><div><b>Catégories</b> <span class="muted small">(base + par niveau)</span></div></div>`;
-  const list = el('div','list'); box.append(list);
+  const acc = accordion('Catégories', false);
+  box.append(acc.wrap);
+  const list = el('div','list'); acc.body.append(list);
 
   function render(){
     list.innerHTML='';
@@ -260,24 +304,25 @@ function catsGroupEditor(base, perLevel, onChange){
     });
   }
   const form = el('div','list-item row'); form.style.flexWrap='wrap'; form.style.gap='6px';
-  const keyI=el('input','input'); keyI.placeholder='cat';
+  const chooser = makeKeyChooser(catsCatalog, 'cat');
   const baseI=el('input','input'); baseI.type='number'; baseI.placeholder='base';
   const perI=el('input','input'); perI.type='number'; perI.placeholder='+/niveau';
   const addB=el('button','btn small'); addB.textContent='Ajouter/Mettre à jour';
   const clrB=el('button','btn small secondary'); clrB.textContent='Vider';
-  addB.onclick=()=>{ const k=(keyI.value||'').trim(); if(!k) return; base[k]=N(baseI.value); perLevel[k]=N(perI.value); onChange(); render(); };
+  addB.onclick=()=>{ const k=chooser.get(); if(!k) return; base[k]=N(baseI.value); perLevel[k]=N(perI.value); onChange(); render(); };
   clrB.onclick=()=>{ Object.keys(base).forEach(k=> delete base[k]); Object.keys(perLevel).forEach(k=> delete perLevel[k]); onChange(); render(); };
-  form.append(keyI, baseI, perI, addB, clrB);
-  box.append(form);
+  acc.body.append(form);
+  form.append(chooser.wrap, baseI, perI, addB, clrB);
 
   render();
   return box;
 }
 
-function resGroupEditor(base, perLevel, onChange){
+function resGroupEditor(base, perLevel, onChange, resCatalog){
   const box = el('div','panel');
-  box.innerHTML = `<div class="list-item"><div><b>Ressources</b> <span class="muted small">(base + par niveau)</span></div></div>`;
-  const list = el('div','list'); box.append(list);
+  const acc = accordion('Ressources', false);
+  box.append(acc.wrap);
+  const list = el('div','list'); acc.body.append(list);
 
   function render(){
     list.innerHTML='';
@@ -307,7 +352,7 @@ function resGroupEditor(base, perLevel, onChange){
   }
 
   const form = el('div','list-item row'); form.style.flexWrap='wrap'; form.style.gap='6px';
-  const keyI=el('input','input'); keyI.placeholder='nom (ex: HP)';
+  const chooser = makeKeyChooser(resCatalog, 'ressource');
   const bStart=el('input','input'); bStart.type='number'; bStart.placeholder='start';
   const bMax=el('input','input'); bMax.type='number'; bMax.placeholder='max';
   const pStart=el('input','input'); pStart.type='number'; pStart.placeholder='+start/niv';
@@ -315,105 +360,138 @@ function resGroupEditor(base, perLevel, onChange){
   const addB=el('button','btn small'); addB.textContent='Ajouter/Mettre à jour';
   const clrB=el('button','btn small secondary'); clrB.textContent='Vider';
   addB.onclick=()=>{
-    const k=(keyI.value||'').trim(); if(!k) return;
+    const k=chooser.get(); if(!k) return;
     base[k]={ start:N(bStart.value), max:N(bMax.value) };
     perLevel[k]={ start:N(pStart.value), max:N(pMax.value) };
     if(base[k].start>base[k].max) base[k].start=base[k].max;
     onChange(); render();
   };
   clrB.onclick=()=>{ Object.keys(base).forEach(k=> delete base[k]); Object.keys(perLevel).forEach(k=> delete perLevel[k]); onChange(); render(); };
-  form.append(keyI,bStart,bMax,pStart,pMax,addB,clrB);
-  box.append(form);
+  acc.body.append(form);
+  form.append(chooser.wrap,bStart,bMax,pStart,pMax,addB,clrB);
 
   render();
   return box;
 }
 
 /* ====================== Catalogue ====================== */
-function rowTemplate(S, t){
-  const row = el('div','panel');
-
-  // HEADER + quick edit
-  const head = el('div','list-item row'); head.style.gap='8px'; head.style.flexWrap='wrap';
+function modelAccordion(S, t){
+  const card = el('div','panel');
   const p = calcPreviewFromTemplate(t, t.level||1, S);
-  const title = el('div'); title.innerHTML = `<b>${t.name}</b> · Lvl ${p.level} · <span class="muted">${t.group||'—'}</span>
-    <span class="muted"> | ${Object.keys(p.stats||{}).slice(0,3).join(', ')}</span>`;
-  const nameI=el('input','input'); nameI.value=t.name||''; nameI.placeholder='Nom'; nameI.style.width='140px';
-  nameI.onchange=()=>{ t.name=nameI.value||'Modèle'; save(S); refreshPreview(); };
-  const lvlI=el('input','input'); lvlI.type='number'; lvlI.min='1'; lvlI.value=t.level||1; lvlI.style.width='64px';
-  lvlI.onchange=()=>{ t.level=Math.max(1,Math.floor(+lvlI.value||1)); save(S); refreshPreview(); };
-  const groupI=el('input','input'); groupI.placeholder='Groupe'; groupI.value=t.group||''; groupI.style.width='120px';
-  groupI.onchange=()=>{ t.group=groupI.value||''; save(S); refreshPreview(); };
-  head.append(title, nameI, lvlI, groupI);
-  row.append(head);
+  const acc = accordion(`${t.name} · Lvl ${p.level} · ${t.group||'—'}`, false);
+  card.append(acc.wrap);
 
-  // INHERITANCE toggles
+  // HEADER quick edit inside body
+  const head = el('div','list-item row'); head.style.gap='8px'; head.style.flexWrap='wrap';
+  const nameI=el('input','input'); nameI.value=t.name||''; nameI.placeholder='Nom'; nameI.style.width='140px';
+  nameI.onchange=()=>{ t.name=nameI.value||'Modèle'; save(S); refreshTitle(); };
+  const lvlI=el('input','input'); lvlI.type='number'; lvlI.min='1'; lvlI.value=t.level||1; lvlI.style.width='64px';
+  lvlI.onchange=()=>{ t.level=Math.max(1,Math.floor(+lvlI.value||1)); save(S); refreshTitle(); };
+  const groupSel = makeKeyChooser([...new Set([...(S.enemyGroups||[]), ...(t.group?[t.group]:[])])], 'groupe');
+  if(t.group) groupSel.set(t.group);
+  const setGroupBtn=el('button','btn small'); setGroupBtn.textContent='Définir groupe';
+  setGroupBtn.onclick=()=>{ const g=groupSel.get(); t.group=g||''; save(S); refreshTitle(); };
+  head.append(nameI,lvlI,groupSel.wrap,setGroupBtn);
+  acc.body.append(head);
+
+  // INHERITANCE toggles + selects
   const inh = el('div','list-item row'); inh.style.gap='10px'; inh.style.flexWrap='wrap';
+  const races = S.races||[]; const tribes=S.tribes||[]; const classes=S.classes||[];
   const uR = el('input'); uR.type='checkbox'; uR.checked=!!t.useRace;
-  const sR = el('select','input'); (S.races||[]).forEach(r=>{ const o=el('option'); o.value=r.id; o.textContent=r.name||r.id; sR.appendChild(o); });
+  const sR = el('select','input'); races.forEach(r=>{ const o=el('option'); o.value=r.id||r.name; o.textContent=r.name||r.id; sR.appendChild(o); });
   if(uR.checked && !t.raceId && sR.options.length) t.raceId = sR.options[0].value;
   sR.value=t.raceId||sR.value||'';
-  uR.onchange=()=>{ t.useRace=uR.checked; if(uR.checked && !t.raceId && sR.options.length) t.raceId=sR.options[0].value; save(S); refreshPreview(); };
-  sR.onchange=()=>{ t.raceId=sR.value; save(S); refreshPreview(); };
+  uR.onchange=()=>{ t.useRace=uR.checked; if(uR.checked && !t.raceId && sR.options.length) t.raceId=sR.options[0].value; save(S); refreshTitle(); };
+  sR.onchange=()=>{ t.raceId=sR.value; save(S); refreshTitle(); };
 
   const uT = el('input'); uT.type='checkbox'; uT.checked=!!t.useTribe;
-  const sT = el('select','input'); (S.tribes||[]).forEach(r=>{ const o=el('option'); o.value=r.id; o.textContent=r.name||r.id; sT.appendChild(o); });
+  const sT = el('select','input'); tribes.forEach(r=>{ const o=el('option'); o.value=r.id||r.name; o.textContent=r.name||r.id; sT.appendChild(o); });
   if(uT.checked && !t.tribeId && sT.options.length) t.tribeId = sT.options[0].value;
   sT.value=t.tribeId||sT.value||'';
-  uT.onchange=()=>{ t.useTribe=uT.checked; if(uT.checked && !t.tribeId && sT.options.length) t.tribeId=sT.options[0].value; save(S); refreshPreview(); };
-  sT.onchange=()=>{ t.tribeId=sT.value; save(S); refreshPreview(); };
+  uT.onchange=()=>{ t.useTribe=uT.checked; if(uT.checked && !t.tribeId && sT.options.length) t.tribeId=sT.options[0].value; save(S); refreshTitle(); };
+  sT.onchange=()=>{ t.tribeId=sT.value; save(S); refreshTitle(); };
 
   const uC = el('input'); uC.type='checkbox'; uC.checked=!!t.useClass;
-  const sC = el('select','input'); (S.classes||[]).forEach(r=>{ const o=el('option'); o.value=r.id; o.textContent=r.name||r.id; sC.appendChild(o); });
+  const sC = el('select','input'); classes.forEach(r=>{ const o=el('option'); o.value=r.id||r.name; o.textContent=r.name||r.id; sC.appendChild(o); });
   if(uC.checked && !t.classId && sC.options.length) t.classId = sC.options[0].value;
   sC.value=t.classId||sC.value||'';
-  uC.onchange=()=>{ t.useClass=uC.checked; if(uC.checked && !t.classId && sC.options.length) t.classId=sC.options[0].value; save(S); refreshPreview(); };
-  sC.onchange=()=>{ t.classId=sC.value; save(S); refreshPreview(); };
+  uC.onchange=()=>{ t.useClass=uC.checked; if(uC.checked && !t.classId && sC.options.length) t.classId=sC.options[0].value; save(S); refreshTitle(); };
+  sC.onchange=()=>{ t.classId=sC.value; save(S); refreshTitle(); };
 
   const labR=el('label','small'); labR.append(uR, document.createTextNode(' Race '), sR);
   const labT=el('label','small'); labT.append(uT, document.createTextNode(' Tribu '), sT);
   const labC=el('label','small'); labC.append(uC, document.createTextNode(' Classe '), sC);
   inh.append(labR,labT,labC);
-  row.append(inh);
+  acc.body.append(inh);
 
   // GROUPED EDITORS
   const editors = el('div'); editors.style.display='grid'; editors.style.gridTemplateColumns='repeat(auto-fit,minmax(320px,1fr))'; editors.style.gap='8px';
-
-  const statsBox = statsGroupEditor(t.stats || (t.stats={}), t.statsPerLevel || (t.statsPerLevel={}), ()=>{ save(S); refreshPreview(); }, getStatsCatalog(S));
-  const catsBox  = catsGroupEditor(t.cats || (t.cats={}), t.catsPerLevel || (t.catsPerLevel={}), ()=>{ save(S); refreshPreview(); });
-  const resBox   = resGroupEditor(t.resources || (t.resources={}), t.resourcesPerLevel || (t.resourcesPerLevel={}), ()=>{ save(S); refreshPreview(); });
-
+  const statsBox = statsGroupEditor(t.stats || (t.stats={}), t.statsPerLevel || (t.statsPerLevel={}), ()=>{ save(S); refreshTitle(); }, getStatsCatalog(S));
+  const catsBox  = catsGroupEditor(t.cats || (t.cats={}), t.catsPerLevel || (t.catsPerLevel={}), ()=>{ save(S); refreshTitle(); }, getCatsCatalog(S));
+  const resBox   = resGroupEditor(t.resources || (t.resources={}), t.resourcesPerLevel || (t.resourcesPerLevel={}), ()=>{ save(S); refreshTitle(); }, getResCatalog(S));
   editors.append(statsBox, catsBox, resBox);
-  row.append(editors);
+  acc.body.append(editors);
 
-  function refreshPreview(){
+  function refreshTitle(){
     const p2 = calcPreviewFromTemplate(t, t.level||1, S);
-    title.innerHTML = `<b>${t.name}</b> · Lvl ${p2.level} · <span class="muted">${t.group||'—'}</span>
-      <span class="muted"> | ${Object.keys(p2.stats||{}).slice(0,3).join(', ')}</span>`;
+    acc.head.innerHTML = `<div><b>${t.name}</b> · Lvl ${p2.level} · <span class="muted">${t.group||'—'}</span></div>`;
   }
+  refreshTitle();
 
-  return row;
+  return card;
+}
+
+function renderGroupsManager(S){
+  const box = el('div','panel');
+  box.innerHTML = '<div class="list-item"><div><b>Groupes</b></div></div>';
+  const list = el('div','list'); box.append(list);
+  const form = el('div','list-item row'); form.style.gap='8px'; form.style.flexWrap='wrap';
+  const nameI=el('input','input'); nameI.placeholder='Nom du groupe';
+  const addB=el('button','btn'); addB.textContent='Ajouter';
+  form.append(nameI, addB);
+  box.append(form);
+
+  function render(){
+    list.innerHTML='';
+    (S.enemyGroups||[]).forEach((g,idx)=>{
+      const row=el('div','list-item small row');
+      const txt=el('div'); txt.textContent=g;
+      const del=el('button','btn small danger'); del.textContent='Supprimer';
+      del.onclick=()=>{ S.enemyGroups.splice(idx,1); save(S); render(); };
+      row.append(txt, del);
+      list.append(row);
+    });
+  }
+  addB.onclick=()=>{
+    const g=(nameI.value||'').trim(); if(!g) return;
+    if(!(S.enemyGroups||[]).includes(g)) S.enemyGroups.push(g);
+    nameI.value=''; save(S); render();
+  };
+  render();
+  return box;
 }
 
 function panelCatalogue(S){
-  const box = el('div');
-  const controls = el('div','list-item row'); controls.style.gap='8px'; controls.style.flexWrap='wrap';
+  const container = el('div');
+
+  // Création (sans accordéon)
+  const creation = el('div','panel');
+  creation.innerHTML = '<div class="list-item"><div><b>Créer un modèle</b></div></div>';
+  const cBar = el('div','list-item row'); cBar.style.gap='8px'; cBar.style.flexWrap='wrap';
   const nameI = el('input','input'); nameI.placeholder='Nom du modèle';
   const lvlI = el('input','input'); lvlI.type='number'; lvlI.min='1'; lvlI.value='1';
-  const addB = el('button','btn'); addB.textContent='Créer un modèle';
-  controls.append(nameI, lvlI, addB);
+  const groupChooser = makeKeyChooser(S.enemyGroups||[], 'groupe');
+  const addB = el('button','btn'); addB.textContent='Créer';
+  cBar.append(nameI, lvlI, groupChooser.wrap, addB);
+  creation.append(cBar);
 
-  const list = el('div');
-  function renderList(){
-    list.innerHTML='';
-    (S.enemiesTemplates||[]).forEach(t=> list.append(rowTemplate(S,t)));
-  }
   addB.onclick = ()=>{
     const nm=(nameI.value||'').trim()||'Modèle';
     const lvl=Math.max(1,Math.floor(+lvlI.value||1));
+    const grp=groupChooser.get()||'';
     S.enemiesTemplates.push({
       id:'tpl_'+Math.random().toString(36).slice(2,9),
-      name:nm, level:lvl, group:'',
+      name:nm, level:lvl, group:grp,
       stats:{}, cats:{}, resources:{},
       statsPerLevel:{}, catsPerLevel:{}, resourcesPerLevel:{},
       useRace:false, raceId:'', useTribe:false, tribeId:'', useClass:false, classId:'',
@@ -422,27 +500,36 @@ function panelCatalogue(S){
     save(S); renderList();
   };
 
-  const acc = accordion('Catalogue (édition + héritage live)', true);
-  acc.body.append(controls, list);
-  box.append(acc.wrap);
+  // Recherche + Groupes + Liste
+  const tools = el('div','panel');
+  tools.innerHTML = '<div class="list-item"><div><b>Modèles existants</b></div></div>';
+  const tBar = el('div','list-item row'); tBar.style.gap='8px'; tBar.style.flexWrap='wrap';
+  const searchI = el('input','input'); searchI.placeholder='Rechercher (nom)…';
+  const groupF = (function(){ const ch=makeKeyChooser(['(Tous)', ...(S.enemyGroups||[])],'groupe'); ch.set('(Tous)'); return ch; })();
+  tBar.append(searchI, groupF.wrap);
+  tools.append(tBar);
 
-  // live header refresh
-  const it = setInterval(()=>{
-    Array.from(list.children).forEach((panel,i)=>{
-      const t = (S.enemiesTemplates||[])[i]; if(!t) return;
-      const head = panel.querySelector('.list-item.row');
-      if(!head) return;
-      const titleDiv = head.firstChild;
-      const p = calcPreviewFromTemplate(t, t.level||1, S);
-      titleDiv.innerHTML = `<b>${t.name}</b> · Lvl ${p.level} · <span class="muted">${t.group||'—'}</span>
-        <span class="muted"> | ${Object.keys(p.stats||{}).slice(0,3).join(', ')}</span>`;
-    });
-  }, 1000);
-  const obs=new MutationObserver(()=>{ if(!document.body.contains(box)){ clearInterval(it); obs.disconnect(); } });
-  obs.observe(document.body,{childList:true,subtree:true});
+  const list = el('div'); tools.append(list);
 
+  function renderList(){
+    list.innerHTML='';
+    const q=(searchI.value||'').toLowerCase();
+    const g=groupF.get();
+    (S.enemiesTemplates||[])
+      .filter(t=> !q || (t.name||'').toLowerCase().includes(q))
+      .filter(t=> !g || g==='(Tous)' || (t.group||'')===g)
+      .forEach(t=> list.append(modelAccordion(S,t)));
+  }
+
+  searchI.addEventListener('input', renderList);
+  const grid = el('div'); grid.style.display='grid'; grid.style.gridTemplateColumns='1fr minmax(260px, 360px)'; grid.style.gap='10px';
+  const left = el('div'); left.append(tools);
+  const right = el('div'); right.append(renderGroupsManager(S));
+  grid.append(left, right);
+
+  container.append(creation, grid);
   renderList();
-  return box;
+  return container;
 }
 
 /* ====================== Déployés ====================== */
@@ -573,7 +660,7 @@ function actorDetails(S, a){
     catsList.innerHTML='';
     const ck=Object.keys(e2.cats||{}).sort();
     if(ck.length===0){ const x=el('div','list-item small muted'); x.textContent='(aucune)'; catsList.append(x); }
-    else ck.forEach(k=>{ const r=el('div','list-item small'); r.innerHTML=`<div><b>${k}</b> : ${e2.cats[k]}</div>`; statsList.append(r); });
+    else ck.forEach(k=>{ const r=el('div','list-item small'); r.innerHTML=`<div><b>${k}</b> : ${e2.cats[k]}</div>`; catsList.append(r); });
 
     resList.innerHTML='';
     const rk=Object.keys(e2.resources||{}).sort();
