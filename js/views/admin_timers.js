@@ -1,91 +1,183 @@
-// TTRPG/js/views/admin_timers.js — Build 4
-// Fixes: ESM-safe but *no* in-file imports. Uses global window.State to avoid dev-server MIME hiccups.
-// Make sure js/core/state.js is included before this file in your HTML/app loader.
+// js/views/admin_timers.js — Build T6
+// Fixes vs T5:
+// - Inputs in timer rows stay EMPTY (no prefill), never auto-cleared except after Add/Sub click.
+// - Removed periodic full re-render that caused focus loss; now we re-render only on explicit actions.
+// - Live time uses fresh state every tick (get()), so labels stay accurate without reflowing inputs.
+// - "Lecture" (master) also starts each timer with remaining > 0 using timerStart().
+// - Proper cleanup of per-row tickers on list re-render.
 
-const State = (typeof window!=='undefined' && window.State) ? window.State : null;
-const el = (t, cls)=>{ const n=document.createElement(t); if(cls) n.className=cls; return n; };
+import { el } from '../core/ui.js';
+import { get, save, timerCreate, timerAdd, timerStart, timerPause, timerRemove, masterPlay, masterPause, masterResume, timerRemaining } from '../core/state.js';
 
-function needState(){
-  if(!State) throw new Error('State module non disponible (window.State manquant). Assure-toi que js/core/state.js est chargé avant ce panneau.');
-  return State;
+/* ---------- utils ---------- */
+function fmt2(n){ n = Math.floor(Math.abs(+n||0)); return (n<10?'0':'')+n; }
+function partsFromSeconds(total){
+  total = Math.max(0, Math.floor(+total||0));
+  const d = Math.floor(total / 86400);
+  total -= d*86400;
+  const h = Math.floor(total / 3600);
+  total -= h*3600;
+  const m = Math.floor(total / 60);
+  const s = total - m*60;
+  return { d, h, m, s };
 }
-
-function fmt(sec){
-  sec = Math.max(0, Math.floor(+sec||0));
-  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
-  const pad=n=> String(n).padStart(2,'0');
-  return (h>0? h+':':'')+pad(m)+':'+pad(s);
+function human(total){
+  const {d,h,m,s} = partsFromSeconds(total);
+  if(d>0) return `${d}j ${fmt2(h)}:${fmt2(m)}:${fmt2(s)}`;
+  return `${fmt2(h)}:${fmt2(m)}:${fmt2(s)}`;
 }
+function secsFromInputs(dI,hI,mI,sI){
+  const d = Math.max(0, Math.floor(+dI.value||0));
+  const h = Math.max(0, Math.floor(+hI.value||0));
+  const m = Math.max(0, Math.floor(+mI.value||0));
+  const s = Math.max(0, Math.floor(+sI.value||0));
+  return d*86400 + h*3600 + m*60 + s;
+}
+function clearInputs(...ins){ ins.forEach(i=> i.value=''); }
 
-function rowTimer(S, t){
-  const row = el('div','list-item small row'); row.style.gap='8px'; row.style.flexWrap='wrap';
-  const name = el('input','input'); name.value=t.name||''; name.placeholder='Nom';
-  name.onchange=()=>{ t.name=name.value||'Timer'; needState().save(S); };
+/* ---------- per-row component ---------- */
+function timerRow(tid){
+  const row = el('div','panel');
+  const head = el('div','list-item row'); head.style.gap='8px'; head.style.flexWrap='wrap';
 
-  const time = el('div','muted'); time.textContent=fmt(t.remaining);
-  const add10 = el('button','btn small'); add10.textContent='+10s';
-  const sub10 = el('button','btn small'); sub10.textContent='-10s';
-  const start = el('button','btn small'); start.textContent='Start';
-  const pause = el('button','btn small'); pause.textContent='Pause';
-  const del   = el('button','btn small danger'); del.textContent='Suppr';
+  // pull current data
+  const S0 = get();
+  const t0 = (S0.timers||[]).find(x=> x.id===tid) || {};
 
-  add10.onclick=()=> needState().timerAdd(S, t.id, 10);
-  sub10.onclick=()=> needState().timerAdd(S, t.id, -10);
-  start.onclick =()=> needState().timerStart(S, t.id);
-  pause.onclick =()=> needState().timerPause(S, t.id);
-  del.onclick   =()=> needState().timerRemove(S, t.id);
+  const nameI = el('input','input'); nameI.value = t0.name||'Timer'; nameI.placeholder='Nom';
+  nameI.onchange = ()=>{ const S=get(); const t=(S.timers||[]).find(x=>x.id===tid); if(!t) return; t.name = nameI.value||'Timer'; save(S); };
 
-  row.append(name, time, add10, sub10, start, pause, del);
+  const timeLabel = el('div','big'); timeLabel.style.minWidth='160px'; timeLabel.style.fontVariantNumeric='tabular-nums';
+  const runningBadge = el('span','badge'); runningBadge.textContent = t0.running ? '▶ en cours' : '❚❚ en pause';
+  runningBadge.style.marginLeft='6px';
+  function renderTime(){
+    const S=get();
+    const tt = (S.timers||[]).find(x=> x.id===tid);
+    if(!tt){ return; }
+    timeLabel.textContent = human(timerRemaining(S, tid));
+    runningBadge.textContent = tt.running ? '▶ en cours' : '❚❚ en pause';
+  }
 
-  const it = setInterval(()=>{
-    if(!document.body.contains(row)){ clearInterval(it); return; }
-    const tt = (S.timers||[]).find(x=>x.id===t.id);
-    if(!tt){ row.remove(); clearInterval(it); return; }
-    time.textContent = fmt(tt.remaining);
-  }, 1000);
+  const startBtn = el('button','btn small'); startBtn.textContent='Start';
+  startBtn.onclick = ()=>{ const S=get(); const tt=(S.timers||[]).find(x=>x.id===tid); if(!tt) return; if(timerRemaining(S, tid)>0){ timerStart(S, tid); masterPlay(S); } };
 
+  const pauseBtn = el('button','btn small'); pauseBtn.textContent='Pause';
+  pauseBtn.onclick = ()=>{ const S=get(); timerPause(S, tid); };
+
+  const delBtn = el('button','btn small danger'); delBtn.textContent='Supprimer';
+  delBtn.onclick = ()=>{ const S=get(); timerRemove(S, tid); renderList(); };
+
+  head.append(nameI, timeLabel, runningBadge, startBtn, pauseBtn, delBtn);
+  row.append(head);
+
+  // Edit panel: add/subtract with d/h/m/s (kept EMPTY; only used as deltas)
+  const edit = el('div','list-item row'); edit.style.gap='8px'; edit.style.flexWrap='wrap';
+  const dI = el('input','input'); dI.type='number'; dI.min='0'; dI.placeholder='jours';
+  const hI = el('input','input'); hI.type='number'; hI.min='0'; hI.placeholder='heures';
+  const mI = el('input','input'); mI.type='number'; mI.min='0'; mI.placeholder='minutes';
+  const sI = el('input','input'); sI.type='number'; sI.min='0'; sI.placeholder='secondes';
+  const addB = el('button','btn small'); addB.textContent='Ajouter';
+  const subB = el('button','btn small'); subB.textContent='Soustraire';
+  addB.onclick = ()=>{ const sec = secsFromInputs(dI,hI,mI,sI); if(sec>0){ const S=get(); timerAdd(S, tid, sec); clearInputs(dI,hI,mI,sI); } };
+  subB.onclick = ()=>{ const sec = secsFromInputs(dI,hI,mI,sI); if(sec>0){ const S=get(); timerAdd(S, tid, -sec); clearInputs(dI,hI,mI,sI); } };
+  edit.append(dI,hI,mI,sI, addB, subB);
+  row.append(edit);
+
+  // local live ticker for this row
+  const int = setInterval(renderTime, 500);
+  timerRow._tickers.set(tid, int);
+  renderTime();
   return row;
 }
+timerRow._tickers = new Map();
 
-export default function renderAdminTimers(S){
-  const root = el('div');
-  const head = el('div','panel');
-  head.innerHTML = '<div class="list-item"><div><b>Timers</b></div></div>';
+/* ---------- list ---------- */
+let _listContainer = null;
+function clearTickers(){
+  timerRow._tickers.forEach(id=> clearInterval(id));
+  timerRow._tickers.clear();
+}
+function renderList(){
+  if(!_listContainer) return;
+  clearTickers();
+  const S = get();
+  _listContainer.innerHTML='';
+  (S.timers||[]).forEach(t=>{ _listContainer.appendChild(timerRow(t.id)); });
+}
+
+/* ---------- creation panel ---------- */
+function creationPanel(){
+  const box = el('div','panel');
+  box.innerHTML = `<div class="list-item"><div><b>Nouveau timer</b></div></div>`;
   const bar = el('div','list-item row'); bar.style.gap='8px'; bar.style.flexWrap='wrap';
 
-  const nm = el('input','input'); nm.placeholder='Nom du timer';
-  const sec = el('input','input'); sec.type='number'; sec.min='0'; sec.placeholder='Secondes';
-  const mk = el('button','btn'); mk.textContent='Créer';
-  const play = el('button','btn'); play.textContent='Master ▶';
-  const pause = el('button','btn'); pause.textContent='Master ⏸';
-  const resume = el('button','btn'); resume.textContent='Master ⏵';
-  const stop = el('button','btn danger'); stop.textContent='Tout stop';
+  const nameI = el('input','input'); nameI.placeholder='Nom (ex. Effet de poison)';
+  const dI = el('input','input'); dI.type='number'; dI.min='0'; dI.placeholder='jours';
+  const hI = el('input','input'); hI.type='number'; hI.min='0'; hI.placeholder='heures';
+  const mI = el('input','input'); mI.type='number'; mI.min='0'; mI.placeholder='minutes';
+  const sI = el('input','input'); sI.type='number'; sI.min='0'; sI.placeholder='secondes';
+  const addB = el('button','btn'); addB.textContent='Créer';
+  addB.onclick = ()=>{
+    const sec = secsFromInputs(dI,hI,mI,sI);
+    if(sec<=0) return;
+    const S=get();
+    const id = timerCreate(S, (nameI.value||'Timer'), sec);
+    // Start master clock only if not already running
+    masterPlay(S);
+    nameI.value=''; clearInputs(dI,hI,mI,sI);
+    renderList();
+  };
 
-  mk.onclick     =()=>{ const id=needState().timerCreate(S, nm.value||'Timer', +sec.value||0); needState().timerStart(S,id); needState().masterPlay(S); nm.value=''; sec.value=''; };
-  play.onclick   =()=> needState().masterPlay(S);
-  pause.onclick  =()=> needState().masterPause(S);
-  resume.onclick =()=> needState().masterResume(S);
-  stop.onclick   =()=> needState().masterStopAll(S);
+  bar.append(nameI, dI,hI,mI,sI, addB);
+  box.append(bar);
+  return box;
+}
 
-  bar.append(nm, sec, mk, play, pause, resume, stop);
-  head.append(bar);
+/* ---------- master controls ---------- */
+function masterControls(){
+  const S = get();
+  const box = el('div','panel');
+  const bar = el('div','list-item row'); bar.style.gap='8px'; bar.style.flexWrap='wrap';
+  const status = el('div','muted'); status.textContent = S.masterClock && S.masterClock.running ? 'Horloge maître: ▶ en cours' : 'Horloge maître: ❚❚ en pause';
+  const play = el('button','btn small'); play.textContent='Lecture';
+  const pause = el('button','btn small'); pause.textContent='Pause';
+  const resume = el('button','btn small'); resume.textContent='Reprendre';
 
-  const listPanel = el('div','panel');
-  const list = el('div','list');
-  listPanel.append(list);
+  play.onclick = ()=>{ 
+    const S=get(); 
+    masterPlay(S); 
+    // ensure each timer starts if it has time left
+    (S.timers||[]).forEach(t=>{ if(timerRemaining(S, t.id) > 0) timerStart(S, t.id); });
+    status.textContent='Horloge maître: ▶ en cours'; 
+  };
+  pause.onclick = ()=>{ const S=get(); masterPause(S); status.textContent='Horloge maître: ❚❚ en pause'; };
+  resume.onclick = ()=>{ const S=get(); masterResume(S); status.textContent='Horloge maître: ▶ en cours'; };
 
-  function render(){
-    list.innerHTML='';
-    (S.timers||[]).forEach(t=> list.append(rowTimer(S,t)));
-  }
-  render();
+  bar.append(status, play, pause, resume);
+  box.append(bar);
 
-  const it = setInterval(()=>{
-    if(!document.body.contains(root)){ clearInterval(it); return; }
-    render();
-  }, 1500);
+  // live refresh of the label (doesn't touch rows/inputs)
+  setInterval(()=>{
+    const S=get();
+    status.textContent = S.masterClock && S.masterClock.running ? 'Horloge maître: ▶ en cours' : 'Horloge maître: ❚❚ en pause';
+  }, 1000);
+  return box;
+}
 
-  root.append(head, listPanel);
+/* ---------- root ---------- */
+export function renderAdminTimers(){
+  const root = el('div');
+  root.append(creationPanel(), masterControls());
+
+  const listWrap = el('div','panel');
+  listWrap.innerHTML = `<div class="list-item"><div><b>Timers</b></div></div>`;
+  _listContainer = el('div');
+  listWrap.append(_listContainer);
+  root.append(listWrap);
+
+  renderList();
+  // no periodic full re-render; rows tick individually
   return root;
 }
-if(typeof window!=='undefined') window.renderAdminTimers = (S)=>renderAdminTimers(S);
+export default renderAdminTimers;
+if(typeof window!=='undefined') window.renderAdminTimers = renderAdminTimers;

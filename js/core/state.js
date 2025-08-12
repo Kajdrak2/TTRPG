@@ -1,4 +1,4 @@
-// js/core/state.js — 6.2.2: global ticker + consommables + cooldowns
+// js/core/state.js — 6.2.3: +mjInbox + combat + enemies + loreFormat
 const LS_KEY = 'JDR_STUDIO_STATE_V1';
 
 /* ---------------- Utilities ---------------- */
@@ -7,10 +7,11 @@ function newId(prefix='id'){ return prefix+'_'+Math.random().toString(36).slice(
 /* ---------------- Persistence ---------------- */
 function defaultState(){
   return {
-    settings: { useCategoryPoints:false, categories:[], slots:[] },
+    settings: { useCategoryPoints:false, categories:[], slots:[], loreFormat:'text' },
     players: [], races: [], tribes: [], classes: [],
     resources: [], items: [], lootbox: [],
-    lore: "", methods: [],
+    lore: "", methods: [], mjInbox: [], enemies: [],
+    combat: { active:false, round:1, turnIndex:0, order:[] },
     timers: [],                     // [{id,name,remaining,running,createdAt}]
     masterClock: { running:false, resumeIds:[], lastTick:0 },
     effects: []                     // [{id, pIndex, itemId, mods, timerId, name}]
@@ -20,10 +21,11 @@ function ensureShape(S){
   const D = defaultState();
   S = S && typeof S==='object' ? S : {};
   for(const k of Object.keys(D)){ if(!(k in S)) S[k]=D[k]; }
-  ['players','races','tribes','classes','resources','items','methods','lootbox','timers','effects'].forEach(k=>{
+  ['players','races','tribes','classes','resources','items','methods','lootbox','timers','effects','mjInbox','enemies'].forEach(k=>{
     if(!Array.isArray(S[k])) S[k]=[];
   });
-  if(!S.settings) S.settings={useCategoryPoints:false, categories:[], slots:[]};
+  if(!S.settings) S.settings={useCategoryPoints:false, categories:[], slots:[], loreFormat:'text'};
+  if(!S.combat || typeof S.combat!=='object') S.combat = { active:false, round:1, turnIndex:0, order:[] };
   if(!Array.isArray(S.settings.slots)) S.settings.slots=[];
   return S;
 }

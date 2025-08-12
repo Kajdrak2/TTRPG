@@ -105,7 +105,7 @@ export function renderPlayerDice(S){
     const btn = panelM.querySelector('#m-roll');
     const out = panelM.querySelector('#m-out');
     const ftxt = panelM.querySelector('#m-form');
-    const methods = (S.dice?.methods||[]);
+    const methods = (S.dice?.methods || S.methods || []);
     sel.innerHTML = methods.map((m,i)=>`<option value="${i}">${m.label||('Méthode '+(i+1))}</option>`).join('');
     const updateF = ()=>{ const m = methods[+sel.value||0]; ftxt.textContent = m?.formula || '—'; };
     sel.onchange = updateF; updateF();

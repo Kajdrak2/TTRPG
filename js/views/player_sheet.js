@@ -1,11 +1,17 @@
-// js/views/player_sheet.js — Reset from user base + fixes + effective values (mods)
+// js/views/player_sheet.js — Build PS9 (inheritance + self-creation)
+// - Inheritance from Race/Tribu/Classe applied to stats & categories (base + per level)
+// - Dice/stat breakdown compatible via shared helpers (State.statBreakdown still supported if present)
+// - Player can CREATE their own character if none exists (name + optional R/T/C)
+// - Resources ensured via State.ensurePlayerResources if available
 import * as State from '../core/state.js';
 import { el } from '../core/ui.js';
 
 /* -------- Helpers (fallbacks) -------- */
+const N = v => (Number.isFinite(+v) ? +v : 0);
 function safeNum(v){ return Number.isFinite(+v) ? +v : 0; }
-function findByName(list, name){
-  return (list||[]).find(e => (e?.name||'') === (name||'')) || null;
+function findByIdOrName(list, id){
+  const sid = String(id||'');
+  return (list||[]).find(e => String(e?.id||'')===sid || String(e?.name||'')===sid) || null;
 }
 function getEquipMods(S,p){
   try{
@@ -13,35 +19,93 @@ function getEquipMods(S,p){
   }catch(_e){/*noop*/}
   return {stats:{}, cats:{}, resources:{}};
 }
+/* ---- Inheritance extract (aligned with admin_bestiaire) ---- */
+const CAND = {
+  statsBase: ['stats','characteristics','baseStats','attrs','statMods','statsBase','stats_base','mods.stats','mod.stats','modifiers.stats'],
+  statsPerL: ['statsPerLevel','perLevelStats','statsLvl','levelStats','stats_per_level','modsPerLevel.stats','modifiersPerLevel.stats'],
+  catsBase:  ['cats','categories','catMods','mods.cats','categoryMods','categoriesDelta'],
+  catsPerL:  ['catsPerLevel','categoriesPerLevel','modsPerLevel.cats'],
+};
+function readPath(obj, path){
+  if(!obj) return undefined;
+  return path.split('.').reduce((a,k)=> (a && a[k]!=null) ? a[k] : undefined, obj);
+}
+function extractInheritance(ent){
+  const r = { stats:{}, statsPerLevel:{}, cats:{}, catsPerLevel:{} };
+  if(!ent || typeof ent!=='object') return r;
+  CAND.statsBase.forEach(p=>{ const o=readPath(ent,p); if(o && typeof o==='object') Object.keys(o).forEach(k=> r.stats[k]=N(o[k])); });
+  CAND.statsPerL.forEach(p=>{ const o=readPath(ent,p); if(o && typeof o==='object') Object.keys(o).forEach(k=> r.statsPerLevel[k]=N(o[k])); });
+  CAND.catsBase.forEach(p=>{ const o=readPath(ent,p); if(o && typeof o==='object') Object.keys(o).forEach(k=> r.cats[k]=N(o[k])); });
+  CAND.catsPerL.forEach(p=>{ const o=readPath(ent,p); if(o && typeof o==='object') Object.keys(o).forEach(k=> r.catsPerLevel[k]=N(o[k])); });
+  return r;
+}
+function inheritedForStat(S,p,stat){
+  const lvl = Math.max(1, Math.floor(+p?.level||1));
+  const Lm1 = (lvl-1);
+  let add = 0;
+  const r = p?.race ? findByIdOrName(S.races, p.race) : null;
+  const t = p?.tribe ? findByIdOrName(S.tribes, p.tribe) : null;
+  const c = p?.klass ? findByIdOrName(S.classes, p.klass) : null;
+  [r,t,c].forEach(ent=>{
+    if(!ent) return;
+    const ex = extractInheritance(ent);
+    if(ex.stats[stat]!=null) add += N(ex.stats[stat]);
+    if(ex.statsPerLevel[stat]!=null) add += N(ex.statsPerLevel[stat])*Lm1;
+  });
+  return add;
+}
+function inheritedForCategory(S,p,cat){
+  const lvl = Math.max(1, Math.floor(+p?.level||1));
+  const Lm1 = (lvl-1);
+  let add = 0;
+  const r = p?.race ? findByIdOrName(S.races, p.race) : null;
+  const t = p?.tribe ? findByIdOrName(S.tribes, p.tribe) : null;
+  const c = p?.klass ? findByIdOrName(S.classes, p.klass) : null;
+  [r,t,c].forEach(ent=>{
+    if(!ent) return;
+    const ex = extractInheritance(ent);
+    if(ex.cats[cat]!=null) add += N(ex.cats[cat]);
+    if(ex.catsPerLevel[cat]!=null) add += N(ex.catsPerLevel[cat])*Lm1;
+  });
+  return add;
+}
+
 function statBreakdownLocal(S, p, stat){
   const base = safeNum(p?.attrs?.[stat]);
   const invested = safeNum(p?.spent?.[stat]);
   const draft = safeNum(p?.tempSpent?.[stat]);
+  const inherit = inheritedForStat(S,p,stat);
   const mods = safeNum(getEquipMods(S,p).stats?.[stat]);
-  const effective = base + invested + draft + mods;
-  return { base, invested, draft, mods, effective };
+  const effective = base + invested + draft + inherit + mods;
+  return { base, invested, draft, inherit, mods, effective };
 }
 function categoryValueLocal(S, p, catName){
   const use = !!S?.settings?.useCategoryPoints;
-  if(!use) return 0;
-  let base = 0;
-  const r = p?.race ? findByName(S.races, p.race) : null;
-  const t = p?.tribe ? findByName(S.tribes, p.tribe) : null;
-  const c = p?.klass ? findByName(S.classes, p.klass) : null;
-  const add = v => { const n = +v || 0; if(Number.isFinite(n)) base += n; };
-  if(r?.catMods) add(r.catMods[catName]);
-  if(t?.catMods) add(t.catMods[catName]);
-  if(c?.catMods) add(c.catMods[catName]);
-  if(p?.catBonusPoints) add(p.catBonusPoints[catName]);
+  let base = 0, inherit=0;
+  if(use){
+    inherit = inheritedForCategory(S,p,catName);
+    const cbp = p?.catBonusPoints?.[catName]; if(Number.isFinite(+cbp)) base += +cbp;
+  }
   const mods = safeNum(getEquipMods(S,p).cats?.[catName]);
-  return { base, mods, effective: base + mods };
+  const effective = base + inherit + mods;
+  return { base, inherit, mods, effective };
 }
-const getBreakdown = (S,p,st) => (typeof State.statBreakdown === 'function' ? State.statBreakdown(S,p,st) : statBreakdownLocal(S,p,st));
+// Prefer State helpers if present, but ensure inherit is included
+const getBreakdown = (S,p,st) => {
+  if(typeof State.statBreakdown === 'function'){
+    const bd = State.statBreakdown(S,p,st) || {};
+    const inherit = inheritedForStat(S,p,st);
+    const effective = N(bd.effective ?? (bd.base+bd.invested+bd.draft+(bd.mods||0))) + inherit;
+    return { ...bd, inherit, effective };
+  }
+  return statBreakdownLocal(S,p,st);
+};
 const getCatValue  = (S,p,cat) => {
   if(typeof State.categoryValueFor === 'function'){
-    const v = State.categoryValueFor(S,p,cat);
+    const base0 = safeNum(State.categoryValueFor(S,p,cat));
+    const inherit = inheritedForCategory(S,p,cat);
     const mods = safeNum(getEquipMods(S,p).cats?.[cat]);
-    return { base: safeNum(v), mods, effective: safeNum(v)+mods };
+    return { base: base0, inherit, mods, effective: base0+inherit+mods };
   }
   return categoryValueLocal(S,p,cat);
 };
@@ -61,22 +125,71 @@ function makeSelect(options, current){
   sel.appendChild(optEmpty);
   (options||[]).forEach(o=>{
     const opt = document.createElement('option');
-    opt.value = o.name;
-    opt.textContent = o.name;
-    if(o.name === (current||'')) opt.selected = true;
+    opt.value = o.id || o.name;
+    opt.textContent = o.name || o.id;
+    if(opt.value === String(current||'')) opt.selected = true;
     sel.appendChild(opt);
   });
   return sel;
 }
 
+function listAllStats(S){
+  const direct = Array.isArray(S.settings?.stats) ? S.settings.stats.slice() : [];
+  if(direct.length) return direct;
+  const viaCats = (S.settings?.categories||[]).flatMap(c => c.stats||[]);
+  if(viaCats.length) return Array.from(new Set(viaCats));
+  const fromChars = Array.isArray(S.characteristics) ? S.characteristics.slice() : [];
+  return fromChars;
+}
+
+function ensurePlayerObject(S){
+  S.players = Array.isArray(S.players) ? S.players : [];
+  return S.players;
+}
+
+function creationPanel(S){
+  const wrap = el('div','panel');
+  wrap.innerHTML = '<div class="list-item"><div><b>Créer mon personnage</b></div></div>';
+  const form = el('div','list');
+  const r1 = el('div','list-item small'); r1.innerHTML='<div>Nom</div>'; const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom'; r1.appendChild(nameI);
+  const r2 = el('div','list-item small'); r2.innerHTML='<div>Race</div>'; const raceS = makeSelect(S.races, ''); r2.appendChild(raceS);
+  const r3 = el('div','list-item small'); r3.innerHTML='<div>Classe</div>'; const clsS  = makeSelect(S.classes, ''); r3.appendChild(clsS);
+  const r4 = el('div','list-item small'); r4.innerHTML='<div>Tribu</div>'; const triS  = makeSelect(S.tribes, ''); r4.appendChild(triS);
+  const r5 = el('div','list-item small'); r5.innerHTML='<div></div>'; const createB = document.createElement('button'); createB.className='btn'; createB.textContent='Créer'; r5.appendChild(createB);
+  form.append(r1,r2,r3,r4,r5); wrap.appendChild(form);
+
+  createB.onclick = ()=>{
+    const name = (nameI.value||'').trim() || 'Héros';
+    const statsList = listAllStats(S);
+    const attrs = {}; statsList.forEach(k=> attrs[k]=0);
+    const p = {
+      id: 'pc_'+Math.random().toString(36).slice(2,9),
+      name,
+      level: 1,
+      race: String(raceS.value||''),
+      klass: String(clsS.value||''),
+      tribe: String(triS.value||''),
+      attrs, spent:{}, tempSpent:{},
+      bonusPoints: +S.settings?.initialPoints || 0,
+      resources: {}
+    };
+    ensurePlayerObject(S).push(p);
+    State.save(S);
+    if(typeof State.ensurePlayerResources==='function'){ State.ensurePlayerResources(S,p); State.save(S); }
+    // Re-render by replacing this panel content
+    const root = wrap.parentElement; if(root){ root.innerHTML=''; root.appendChild(renderPlayerSheet(S)); }
+  };
+
+  return wrap;
+}
+
 export function renderPlayerSheet(S){
-  const p = (S.players||[])[0];
+  const players = ensurePlayerObject(S);
+  const p = players[0];
   const box = el('div');
 
   if(!p){
-    const warn = el('div','panel');
-    warn.innerHTML = '<div class="list-item"><div>Aucun joueur. Crée un joueur dans <b>Admin → Joueurs</b>.</div></div>';
-    box.appendChild(warn);
+    box.appendChild(creationPanel(S));
     return box;
   }
 
@@ -204,7 +317,14 @@ export function renderPlayerSheet(S){
       head.appendChild(title);
       if(S.settings?.useCategoryPoints){
         const catV = getCatValue(S,p,catName);
-        const info = document.createElement('div'); info.className='muted small'; info.textContent = `points : ${catV.effective}${catV.mods?` = ${catV.base} ${(catV.mods>0?'+':'')}${catV.mods}`:''}`;
+        const info = document.createElement('div'); info.className='muted small'; 
+        const parts = [`points : ${catV.effective}`];
+        const expl = [];
+        if(catV.base) expl.push(`${catV.base}`);
+        if(catV.inherit) expl.push(`${catV.inherit>=0?'+':''}${catV.inherit}`);
+        if(catV.mods) expl.push(`${catV.mods>=0?'+':''}${catV.mods}`);
+        if(expl.length) parts.push(`= ${expl.join(' ')}`);
+        info.textContent = parts.join(' ');
         head.appendChild(info);
       }
       wrap.appendChild(head);
@@ -215,9 +335,11 @@ export function renderPlayerSheet(S){
         const name = el('div'); name.className='name'; name.textContent = st;
         const bd = getBreakdown(S,p,st);
         const sub = el('div'); sub.className='muted small'; 
-        const eff = (bd.effective!=null)? bd.effective : (bd.base + bd.invested + bd.draft + (bd.mods||0));
-        const modsTxt = bd.mods ? ` · Mods: ${(bd.mods>0?'+':'')}${bd.mods}` : '';
-        sub.textContent = `Base: ${bd.base} · Investis: ${bd.invested} · Brouillon: ${bd.draft}${modsTxt} · Effectif: ${eff}`;
+        const parts = [`Base: ${bd.base}`, `Investis: ${bd.invested}`, `Brouillon: ${bd.draft}`];
+        if(bd.inherit) parts.push(`Héritage: ${bd.inherit>=0?'+':''}${bd.inherit}`);
+        if(bd.mods) parts.push(`Mods: ${bd.mods>=0?'+':''}${bd.mods}`);
+        parts.push(`Effectif: ${bd.effective}`);
+        sub.textContent = parts.join(' · ');
         card.append(name, sub);
 
         const canShowControls = pointsLeft(p)>0 || (+bd.draft||0)>0;

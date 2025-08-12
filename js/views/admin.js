@@ -1,66 +1,65 @@
-// js/views/admin.js — Ajout onglet Bestiaire (Patch 6.1a+b)
+// js/views/admin.js — Build A7 (tabs: Système, Bestiaire, Timers, MJ, Combat)
 import { el } from '../core/ui.js';
+import * as State from '../core/state.js';
 
-function loadPanel(panelEl, loader){
-  panelEl.innerHTML = '<div class="panel"><div class="list-item"><div class="muted">Chargement...</div></div></div>';
-  Promise.resolve().then(loader).then(function(node){
-    panelEl.innerHTML='';
-    if(node instanceof HTMLElement) panelEl.appendChild(node);
-    else if(node && node.nodeType) panelEl.appendChild(node);
-    else if(typeof node === 'string'){ const d=document.createElement('div'); d.innerHTML=node; panelEl.appendChild(d); }
-    else panelEl.innerHTML = '<div class="muted panel">[vide]</div>';
-  }).catch(function(err){
-    console.error('[Admin loader error]', err);
-    panelEl.innerHTML = '<div class="panel"><div class="list-item"><div class="muted">Panneau bientôt disponible</div></div></div>';
-  });
+function tabButton(def, active=false){
+  const b = el('button','btn secondary tab'+(active?' active':''));
+  b.textContent = def.label;
+  b.dataset.id = def.id;
+  return b;
+}
+function mountLoader(panel, loader){
+  panel.innerHTML = '<div class="muted small">Chargement…</div>';
+  Promise.resolve()
+    .then(loader)
+    .then(node => {
+      panel.innerHTML='';
+      if(node instanceof HTMLElement) panel.appendChild(node);
+      else if(node && node.nodeType===1) panel.appendChild(node);
+      else panel.textContent='(contenu vide)';
+    })
+    .catch(err => {
+      console.error('[Admin loader error]', err);
+      panel.innerHTML = `<div class="error">[Admin loader error] ${(err && err.message) || err}</div>`;
+    });
 }
 
-export function renderAdminApp(S){
+export function renderAdmin(){
+  const S = State.get();
   const root = el('div');
-  const tabs = el('div','row'); tabs.style.gap='10px'; tabs.style.flexWrap='wrap';
+  const tabs = el('div','row'); tabs.style.gap='8px';
+  const panel = el('div'); panel.style.marginTop='12px';
+
   const defs = [
-    {id:'a-lore',    label:'Lore',             loader:function(){ return import('./admin_lore.js').then(m=> (m.renderLore||m.default)(S)); }},
-    {id:'a-sys',     label:'Système',          loader:function(){ return import('./admin_systems.js').then(m=> (m.renderSystems||m.default)(S)); }},
-    {id:'a-cats',    label:'Caractéristiques', loader:function(){ return import('./admin_categories.js').then(m=> (m.renderCategories||m.default)(S)); }},
-    {id:'a-res',     label:'Ressources',       loader:function(){ return import('./admin_resources.js').then(m=> (m.renderResourcesAdmin||m.default)(S)); }},
-    {id:'a-races',   label:'Races',            loader:function(){ return import('./admin_entities.js').then(m=> (m.renderEntities||m.default)(S,'races')); }},
-    {id:'a-tribes',  label:'Tribus',           loader:function(){ return import('./admin_entities.js').then(m=> (m.renderEntities||m.default)(S,'tribes')); }},
-    {id:'a-classes', label:'Classes',          loader:function(){ return import('./admin_entities.js').then(m=> (m.renderEntities||m.default)(S,'classes')); }},
-    {id:'a-items',   label:'Items',            loader:function(){ return import('./admin_items.js').then(m=> (m.renderAdminItems||m.default)(S)); }},
-    {id:'a-players', label:'Joueurs',          loader:function(){ return import('./admin_players.js').then(m=> (m.renderPlayers||m.default)(S)); }},
-    {id:'a-timers',  label:'Timers',           loader:function(){ return import('./admin_timers.js').then(m=> (m.renderAdminTimers||m.default)(S)); }},
-    // Nouveau : Bestiaire
-    {id:'a-best',    label:'Bestiaire',        loader:function(){ return import('./admin_bestiaire.js').then(m=> (m.renderAdminBestiaire||m.default)(S)); }},
+    { id:'sys',  label:'Système',   loader:()=>import('./admin_systems.js').then(m=> (m.renderAdminSystems||m.default)(S)) },
+    { id:'best', label:'Bestiaire', loader:()=>import('./admin_bestiaire.js').then(m=> (m.renderAdminBestiaire||m.default)(S)) },
+    { id:'tim',  label:'Timers',    loader:()=>import('./admin_timers.js').then(m=> (m.renderAdminTimers||m.default)(S)) },
+    { id:'lore', label:'Lore',       loader:()=>import('./admin_lore.js').then(m=> (m.renderAdminLore||m.default)(S)) },
+    { id:'items',label:'Objets',     loader:()=>import('./admin_items.js').then(m=> (m.renderAdminItems||m.default)(S)) },
+    { id:'mj',   label:'Messagerie',        loader:()=>import('./admin_mj.js').then(m=> (m.renderAdminMJ||m.default)(S)) },
+    { id:'comb', label:'Combat',    loader:()=>import('./admin_combat.js').then(m=> (m.renderAdminCombat||m.default)(S)) },
   ];
 
-  defs.forEach(function(t,i){
-    const b = el('button','btn secondary tab'+(i===0?' active':''));
-    b.dataset.id = t.id; b.textContent = t.label; tabs.appendChild(b);
+  defs.forEach((d,i)=>{
+    const b = tabButton(d, i===0);
+    b.onclick = ()=>{
+      tabs.querySelectorAll('.tab').forEach(x=> x.classList.remove('active'));
+      b.classList.add('active');
+      mountLoader(panel, d.loader);
+    };
+    tabs.appendChild(b);
   });
+
   root.appendChild(tabs);
-
-  const panels = {}; defs.forEach(d=> panels[d.id]=el('div'));
-  Object.values(panels).forEach(function(p,i){ p.className='mt8'; if(i!==0) p.style.display='none'; root.appendChild(p); });
-
-  function activate(id){
-    Object.values(panels).forEach(p=> p.style.display='none');
-    Array.from(tabs.children).forEach(b=> b.classList.remove('active'));
-    panels[id].style.display='block';
-    const btn = Array.from(tabs.children).find(b=> b.dataset.id===id); if(btn) btn.classList.add('active');
-  }
-
-  // listeners
-  Array.from(tabs.children).forEach(function(b, idx){
-    b.addEventListener('click', function(){
-      const def = defs[idx];
-      activate(def.id);
-      loadPanel(panels[def.id], def.loader);
-    });
-  });
-
-  // charge premier onglet
-  loadPanel(panels[defs[0].id], defs[0].loader);
+  root.appendChild(panel);
+  // load first by default
+  mountLoader(panel, defs[0].loader);
 
   return root;
 }
-export default renderAdminApp;
+export default renderAdmin;
+if(typeof window!=='undefined') window.renderAdmin = renderAdmin;
+
+
+// Back-compat: some shells import { renderAdminApp }
+export function renderAdminApp(){ return renderAdmin(); }
