@@ -35,6 +35,20 @@
   <!-- Bouton flottant pour basculer admin/joueur -->
   <button id="viewToggle" class="fab" title="Basculer de vue"></button>
 
+  
+  <script>
+    (function(){
+      try{
+        var hasRoute = (location.hash && location.hash.length > 1);
+        if(!hasRoute){
+          // Defaut: aller sur l'accueil
+          location.hash = '#accueil';
+        }
+      }catch(e){ /* noop */ }
+    })();
+  </script>
+
+  <script src="js/bootstrap_route.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

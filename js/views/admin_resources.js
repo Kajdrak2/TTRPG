@@ -1,124 +1,105 @@
-// js/views/admin_resources.js
-// Patch 5.9.3 — Ressources avec ACCORDÉONS (par ressource) + portée globale/ciblée
-import * as State from '../core/state.js';
+// js/views/admin_resources.js — Build ARS4 (scopes + linkage; safe DOM ops)
 import { el } from '../core/ui.js';
+import { get, save } from '../core/state.js';
 
-function ensureApplies(r){ r.appliesTo = r.appliesTo || { races:[], tribes:[], classes:[] }; return r.appliesTo; }
-function numberInput(val, on){ const n=document.createElement('input'); n.type='number'; n.step='1'; n.className='input'; n.style.width='100px'; n.value=String(+val||0); n.oninput=()=>on(Math.trunc(+n.value||0)); return n; }
-function checkbox(label, checked, on){ const l=document.createElement('label'); l.style.marginRight='12px'; const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked; cb.onchange=()=>on(!!cb.checked); l.append(cb, document.createTextNode(' '+label)); return l; }
+function uid(){ return 'res_'+Math.random().toString(36).slice(2,9); }
+function ensure(S){ S.resources = Array.isArray(S.resources)? S.resources : []; return S.resources; }
+var SCOPES = ['globale','races','tribus','classes'];
 
-function accordionPanel(titleLeft, titleRight){
-  const host = document.createElement('div'); host.className='panel';
+function scopeLabel(s){ 
+  if(s==='globale') return 'Globale';
+  if(s==='races') return 'Races';
+  if(s==='tribus') return 'Tribus';
+  if(s==='classes') return 'Classes';
+  return s||'Globale';
+}
+
+function rowRes(S, res, onRefresh){
+  const r = el('div','panel');
   const head = el('div','list-item'); head.style.cursor='pointer';
-  const left = document.createElement('div'); left.innerHTML = `<b>${titleLeft}</b>`;
-  const right = document.createElement('div'); right.className='muted small'; right.textContent = titleRight || 'cliquer pour ouvrir/fermer';
-  head.append(left, right);
-  const body = document.createElement('div'); body.className='inner'; body.style.display='none';
-  head.addEventListener('click', ()=>{ body.style.display = (body.style.display==='none') ? 'block' : 'none'; });
-  host.append(head, body);
-  return { host, head, body, left, right };
+  // header
+  const hleft = el('div'); const hname=document.createElement('b'); hname.textContent = res.name||'Ressource'; hleft.appendChild(hname);
+  const hscope = el('span','muted small'); hscope.style.marginLeft='8px'; hscope.textContent = '— ' + scopeLabel(res.scope); hleft.appendChild(hscope);
+  const hright = el('div'); const del=el('button','btn small danger'); del.textContent='Supprimer'; hright.appendChild(del);
+  head.appendChild(hleft); head.appendChild(hright);
+  r.appendChild(head);
+
+  const body = el('div','list'); body.style.display='none'; r.appendChild(body);
+  head.onclick = function(){ body.style.display = (body.style.display==='none') ? 'block' : 'none'; };
+
+  // Nom
+  (function(){
+    const line = el('div','list-item small');
+    const left = el('div'); left.textContent='Nom'; line.appendChild(left);
+    const right = el('div');
+    const nameI=document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom'; nameI.value = res.name||'';
+    right.appendChild(nameI); line.appendChild(right); body.appendChild(line);
+    nameI.oninput = function(){ res.name = nameI.value||''; save(S); hname.textContent=res.name||'Ressource'; };
+  })();
+
+  // Portee
+  (function(){
+    const line = el('div','list-item small');
+    const left = el('div'); left.textContent='Portee'; line.appendChild(left);
+    const right = el('div');
+    const sel=document.createElement('select'); sel.className='select';
+    SCOPES.forEach(function(s){ const o=document.createElement('option'); o.value=s; o.textContent=scopeLabel(s); if((res.scope||'globale')===s) o.selected=true; sel.appendChild(o); });
+    right.appendChild(sel); line.appendChild(right); body.appendChild(line);
+    sel.onchange = function(){ res.scope = sel.value; save(S); hscope.textContent='— '+scopeLabel(res.scope); onRefresh(); };
+  })();
+
+  // Liens
+  (function(){
+    const sc = res.scope || 'globale';
+    if(sc==='globale') return;
+    const list = el('div','list-item small');
+    const left = el('div'); left.textContent='Lie a'; list.appendChild(left);
+    const right = el('div');
+    const names = (sc==='races' ? (S.races||[]) : sc==='tribus' ? (S.tribes||[]) : (S.classes||[])).map(function(x){ return x && x.name; }).filter(Boolean);
+    const set = new Set(Array.isArray(res.linked)? res.linked : []);
+    names.forEach(function(n){
+      const label=document.createElement('label'); label.style.marginRight='8px';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.value=n; cb.checked = set.has(n);
+      cb.onchange = function(){ if(cb.checked) set.add(n); else set.delete(n); res.linked = Array.from(set); save(S); };
+      label.appendChild(cb); label.appendChild(document.createTextNode(' '+n)); right.appendChild(label);
+    });
+    list.appendChild(right); body.appendChild(list);
+  })();
+
+  del.onclick = function(){ const arr=ensure(S); const i=arr.indexOf(res); if(i>=0){ arr.splice(i,1); save(S); onRefresh(); } };
+
+  return r;
 }
 
-function multiSelectChips(title, items, selected, onToggle){
-  const box = el('div','list-item small'); box.append(document.createElement('div'), document.createElement('div'));
-  box.children[0].innerHTML = `<b>${title}</b>`;
-  const wrap = document.createElement('div');
-  (items||[]).forEach(name => {
-    const isSel = selected.includes(name);
-    wrap.appendChild(checkbox(name, isSel, (v)=> onToggle(name, v)));
-  });
-  box.children[1].appendChild(wrap);
-  return box;
-}
-
-function resourcePanel(S, r, onRefresh){
-  const ac = accordionPanel(r.name || '(sans nom)' , 'cliquer pour ouvrir/fermer');
-
-  // Nom / Min / Max / Start
-  const grid = el('div','grid3');
-
-  const rName = el('div','list-item small'); rName.innerHTML='<div>Nom</div>';
-  const nameI = document.createElement('input'); nameI.className='input'; nameI.value=r.name||'';
-  nameI.oninput = (e)=>{ r.name=e.target.value; State.save(S); ac.left.innerHTML=`<b>${r.name||'(sans nom)'}</b>`; };
-  rName.appendChild(document.createElement('div')).appendChild(nameI);
-  grid.appendChild(rName);
-
-  const rMin = el('div','list-item small'); rMin.innerHTML='<div>Min</div>';
-  rMin.appendChild(document.createElement('div')).appendChild(numberInput(r.min, v=>{ r.min=v; State.save(S); }));
-  grid.appendChild(rMin);
-
-  const rMax = el('div','list-item small'); rMax.innerHTML='<div>Max</div>';
-  rMax.appendChild(document.createElement('div')).appendChild(numberInput(r.max, v=>{ r.max=v; State.save(S); }));
-  grid.appendChild(rMax);
-
-  const rStart = el('div','list-item small'); rStart.innerHTML='<div>Start</div>';
-  rStart.appendChild(document.createElement('div')).appendChild(numberInput(r.start, v=>{ r.start=v; State.save(S); }));
-  grid.appendChild(rStart);
-
-  ac.body.appendChild(grid);
-
-  // Portée (globale / ciblée)
-  const scopeRow = el('div','list-item small'); scopeRow.innerHTML='<div>Portée</div>';
-  const scopeWrap = document.createElement('div');
-  const sel = document.createElement('select'); sel.className='select';
-  ['global','ciblée'].forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; if((r.scope||'global')===v) o.selected=true; sel.appendChild(o); });
-  sel.onchange = ()=>{ r.scope = sel.value; State.save(S); refreshScope(); };
-  scopeWrap.appendChild(sel);
-  scopeRow.appendChild(scopeWrap);
-  ac.body.appendChild(scopeRow);
-
-  const scopeBox = document.createElement('div'); ac.body.appendChild(scopeBox);
-
-  function refreshScope(){
-    scopeBox.innerHTML='';
-    if((r.scope||'global') === 'global'){
-      const info = el('div','muted small'); info.style.padding='6px 12px'; info.textContent = 'Disponible pour toutes les entités.';
-      scopeBox.appendChild(info);
-    }else{
-      ensureApplies(r);
-      scopeBox.appendChild(multiSelectChips('Races',  (S.races||[]).map(x=>x.name), r.appliesTo.races, (name, v)=>{ const a=r.appliesTo.races; const i=a.indexOf(name); if(v&&i<0) a.push(name); if(!v&&i>=0) a.splice(i,1); State.save(S); }));
-      scopeBox.appendChild(multiSelectChips('Tribus', (S.tribes||[]).map(x=>x.name), r.appliesTo.tribes, (name, v)=>{ const a=r.appliesTo.tribes; const i=a.indexOf(name); if(v&&i<0) a.push(name); if(!v&&i>=0) a.splice(i,1); State.save(S); }));
-      scopeBox.appendChild(multiSelectChips('Classes',(S.classes||[]).map(x=>x.name), r.appliesTo.classes, (name, v)=>{ const a=r.appliesTo.classes; const i=a.indexOf(name); if(v&&i<0) a.push(name); if(!v&&i>=0) a.splice(i,1); State.save(S); }));
-    }
-  }
-  refreshScope();
-
-  // Supprimer
-  const delRow = el('div','list-item small'); delRow.append(document.createElement('div'), document.createElement('div'));
-  const delBtn = document.createElement('button'); delBtn.className='btn danger small'; delBtn.textContent='Supprimer';
-  delBtn.onclick = ()=>{ const i=S.resources.indexOf(r); if(i>=0){ S.resources.splice(i,1); State.save(S); onRefresh && onRefresh(); } };
-  delRow.children[1].appendChild(delBtn);
-  ac.body.appendChild(delRow);
-
-  return ac.host;
-}
-
-export function renderResourcesAdmin(S){
-  S.resources = Array.isArray(S.resources) ? S.resources : [];
+export function renderAdminResources(){
+  const S = get(); ensure(S);
   const root = el('div');
-
-  const toolbar = el('div','row'); toolbar.style.justifyContent='space-between'; toolbar.style.alignItems='center';
-  const tl = document.createElement('h3'); tl.textContent = 'Ressources';
-  const tr = document.createElement('div');
-  const add = document.createElement('button'); add.className='btn'; add.textContent='Ajouter ressource';
-  add.onclick = ()=>{ S.resources.push({ name:'Nouvelle', min:0, max:10, start:0, scope:'global', appliesTo:{ races:[], tribes:[], classes:[] } }); State.save(S); refresh(); };
-  tr.appendChild(add);
-  toolbar.append(tl,tr);
-  root.appendChild(toolbar);
-
-  const container = el('div'); root.appendChild(container);
+  const panel = el('div','panel'); 
+  const head = el('div','list-item'); const hdLeft=el('div'); hdLeft.innerHTML='<b>Ressources</b>'; head.appendChild(hdLeft); panel.appendChild(head);
+  const list = el('div','list'); panel.appendChild(list);
+  root.appendChild(panel);
 
   function refresh(){
-    container.innerHTML='';
-    if(S.resources.length===0){
-      const empty = el('div','muted small'); empty.style.padding='8px 12px'; empty.textContent='Aucune ressource.';
-      container.appendChild(empty);
-      return;
-    }
-    S.resources.forEach(r => container.appendChild(resourcePanel(S, r, refresh)));
+    list.innerHTML='';
+    ensure(get()).forEach(function(res){ list.appendChild(rowRes(get(), res, refresh)); });
+
+    const add = el('div','list-item small');
+    const left = el('div'); left.textContent='Ajouter ressource'; add.appendChild(left);
+    const right = el('div');
+    const nameI=document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom';
+    const scopeS=document.createElement('select'); scopeS.className='select'; SCOPES.forEach(function(s){ const o=document.createElement('option'); o.value=s; o.textContent=scopeLabel(s); scopeS.appendChild(o); });
+    const addB=document.createElement('button'); addB.className='btn'; addB.textContent='Ajouter';
+    addB.onclick=function(){
+      const nm=(nameI.value||'').trim(); if(!nm) return;
+      const obj={ id:uid(), name:nm, scope:scopeS.value||'globale' };
+      ensure(S).push(obj); save(S); refresh();
+    };
+    right.appendChild(nameI); right.appendChild(scopeS); right.appendChild(addB);
+    add.appendChild(right);
+    list.appendChild(add);
   }
   refresh();
 
   return root;
 }
-export default renderResourcesAdmin;
+export default renderAdminResources;
