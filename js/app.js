@@ -46,21 +46,24 @@ if(!app){
 let S = State.load();
 if (gameId) gameId.textContent = S.id || '';
 
+const LS_VIEW = 'jdr_ui_view';
+const LS_ROLE = 'jdr_role';
+const LS_HOME = 'jdr_home'; // '1' to show home
+
+
+
 /* ---------- Storage keys ---------- */
 /* ---------- First-visit / explicit #accueil handling ---------- */
 (function(){
   try{
-    var HASH_HOME = (location && location.hash === '#accueil');
-    var firstVisit = (!localStorage.getItem(LS_ROLE) && !localStorage.getItem(LS_VIEW) && !(S && S.id));
+    var HASH_HOME = (typeof location!=='undefined' && location.hash === '#accueil');
+    var firstVisit = (!localStorage.getItem('jdr_role') && !localStorage.getItem('jdr_ui_view') && !(S && S.id));
     if (HASH_HOME || firstVisit){
-      localStorage.setItem(LS_HOME, '1'); // force Home
+      localStorage.setItem('jdr_home', '1');
     }
   }catch(e){}
 })();
 
-const LS_VIEW = 'jdr_ui_view';
-const LS_ROLE = 'jdr_role';
-const LS_HOME = 'jdr_home'; // '1' to show home
 
 function currentView(){ return localStorage.getItem(LS_VIEW) || 'admin'; }
 function saveView(v){ localStorage.setItem(LS_VIEW, v); }
