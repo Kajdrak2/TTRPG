@@ -47,6 +47,17 @@ let S = State.load();
 if (gameId) gameId.textContent = S.id || '';
 
 /* ---------- Storage keys ---------- */
+/* ---------- First-visit / explicit #accueil handling ---------- */
+(function(){
+  try{
+    var HASH_HOME = (location && location.hash === '#accueil');
+    var firstVisit = (!localStorage.getItem(LS_ROLE) && !localStorage.getItem(LS_VIEW) && !(S && S.id));
+    if (HASH_HOME || firstVisit){
+      localStorage.setItem(LS_HOME, '1'); // force Home
+    }
+  }catch(e){}
+})();
+
 const LS_VIEW = 'jdr_ui_view';
 const LS_ROLE = 'jdr_role';
 const LS_HOME = 'jdr_home'; // '1' to show home
