@@ -1,4 +1,4 @@
-// js/views/admin.js — Build C2 (tous onglets restaurés)
+// js/views/admin.js — Tous les onglets + loader robuste
 import { el } from '../core/ui.js';
 import * as State from '../core/state.js';
 
@@ -40,8 +40,6 @@ export function renderAdmin(){
     { id:'players', label:'Joueurs',    loader:()=> import('./admin_players.js').then(m=> (m.renderAdminPlayers||m.default)(S)) },
     { id:'lore',    label:'Lore',       loader:()=> import('./admin_lore.js').then(m=> (m.renderAdminLore||m.default)(S)) },
     { id:'slots',   label:'Slots',      loader:()=> import('./admin_slots.js').then(m=> (m.renderAdminSlots||m.default)(S)) },
-    // { id:'messages', label:'Messagerie', loader:()=> import('./admin_messages.js').then(m=> (m.renderAdminMessages||m.default)(S)) }, // à réintroduire quand le state supportera la messagerie
-    // { id:'combat',    label:'Combat',    loader:()=> import('./admin_combat.js').then(m=> (m.renderAdminCombat||m.default)(S)) },
   ];
 
   defs.forEach((d,i)=>{

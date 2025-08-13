@@ -72,44 +72,49 @@ function makeSelect(options, current){
 export function renderPlayerSheet(S){
   const p = (S.players||[])[0];
   // If no player exists yet, allow self-creation (first visit / private browsing)
+  
   if(!p){
     const box = el('div');
-    const pnl = el('div','panel'); const head = el('div','list-item'); head.innerHTML = '<div><b>Créer mon personnage</b></div>'; pnl.appendChild(head); box.appendChild(pnl);
+    // Panel header
+    const pnl = el('div','panel');
+    const head = el('div','list-item');
+    const left = document.createElement('div'); left.innerHTML = '<b>Créer mon personnage</b>';
+    head.appendChild(left); pnl.appendChild(head); box.appendChild(pnl);
     const list = el('div','list'); pnl.appendChild(list);
 
+    // Nom
     const rowName = el('div','list-item small'); rowName.innerHTML = '<div>Nom</div>';
     const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom du personnage';
     rowName.appendChild(el('div')).appendChild(nameI); list.appendChild(rowName);
 
-    // R/T/C (affichés uniquement si activés)
+    // R/T/C si activés
     const st = S.settings||{};
     let raceS=null, tribeS=null, classS=null;
-
     if(st.useRaces){
-      const r = el('div','list-item small'); r.innerHTML = '<div>Race</div>';
+      const r = el('div','list-item small'); r.innerHTML='<div>Race</div>';
       raceS = document.createElement('select'); raceS.className='select';
       const ro0=document.createElement('option'); ro0.value=''; ro0.textContent='—'; raceS.appendChild(ro0);
       (S.races||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; raceS.appendChild(o); });
       r.appendChild(el('div')).appendChild(raceS); list.appendChild(r);
     }
     if(st.useTribes){
-      const r = el('div','list-item small'); r.innerHTML = '<div>Tribu</div>';
+      const r = el('div','list-item small'); r.innerHTML='<div>Tribu</div>';
       tribeS = document.createElement('select'); tribeS.className='select';
       const to0=document.createElement('option'); to0.value=''; to0.textContent='—'; tribeS.appendChild(to0);
       (S.tribes||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; tribeS.appendChild(o); });
       r.appendChild(el('div')).appendChild(tribeS); list.appendChild(r);
     }
     if(st.useClasses){
-      const r = el('div','list-item small'); r.innerHTML = '<div>Classe</div>';
+      const r = el('div','list-item small'); r.innerHTML='<div>Classe</div>';
       classS = document.createElement('select'); classS.className='select';
       const co0=document.createElement('option'); co0.value=''; co0.textContent='—'; classS.appendChild(co0);
       (S.classes||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; classS.appendChild(o); });
       r.appendChild(el('div')).appendChild(classS); list.appendChild(r);
     }
 
-    const actions = el('div','list-item small');
+    // Actions
+    const actions = el('div','list-item small'); actions.appendChild(document.createElement('div'));
     const createB = document.createElement('button'); createB.className='btn'; createB.textContent='Créer';
-    actions.appendChild(document.createElement('div'));
     actions.lastChild.appendChild(createB); list.appendChild(actions);
 
     createB.onclick = ()=>{
@@ -121,7 +126,6 @@ export function renderPlayerSheet(S){
       if(classS) np.klass = classS.value||'';
       (S.players=S.players||[]).push(np);
       State.save(S);
-      // Re-render full sheet in place
       const node = renderPlayerSheet(S);
       box.replaceWith(node);
     };
@@ -129,14 +133,10 @@ export function renderPlayerSheet(S){
     return box;
   }
 
+
   const box = el('div');
 
-  if(!p){
-    const warn = el('div','panel');
-    warn.innerHTML = '<div class="list-item"><div>Aucun joueur. Crée un joueur dans <b>Admin → Joueurs</b>.</div></div>';
-    box.appendChild(warn);
-    return box;
-  }
+  /* removed legacy no-player warn (creation form now handles this) */
 
   // ----- Identité (lecture seule après validation) -----
   const idCard = el('div','panel');

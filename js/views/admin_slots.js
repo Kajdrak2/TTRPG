@@ -1,12 +1,11 @@
-// js/views/admin_slots.js — Build B2 (Gestion complète des slots d'équipement)
+// js/views/admin_slots.js — Gestion des slots d'équipement
 import { el } from '../core/ui.js';
 import * as State from '../core/state.js';
 
 function normalizeSlots(S){
   S.settings = S.settings && typeof S.settings==='object' ? S.settings : {};
   if(!Array.isArray(S.settings.slots)) S.settings.slots = [];
-  // remove falsy/trim
-  S.settings.slots = S.settings.slots.map(s=>(s||'').trim()).filter(Boolean);
+  S.settings.slots = S.settings.slots.map(s => (s||'').trim()).filter(Boolean);
 }
 
 function move(arr, from, to){
@@ -21,7 +20,7 @@ export function renderAdminSlots(Sin){
 
   const root = el('div');
   const pnl = el('div','panel');
-  pnl.innerHTML = '<div class="list-item"><div><b>Slots d\\'équipement</b></div><div class="muted small">Ordre = priorité d\\'équipement</div></div>';
+  pnl.innerHTML = '<div class="list-item"><div><b>Slots d\'équipement</b></div><div class="muted small">Ordre = priorité d\'équipement</div></div>';
   const list = el('div','list');
   pnl.appendChild(list);
   root.appendChild(pnl);
@@ -39,9 +38,10 @@ export function renderAdminSlots(Sin){
         const row = el('div','list-item small');
         const left = document.createElement('div');
         left.innerHTML = '<b>'+name+'</b>';
-        const right = document.createElement('div'); right.style.display='flex'; right.style.gap='8px'; right.style.alignItems='center';
+        const right = document.createElement('div');
+        right.style.display='flex'; right.style.gap='8px'; right.style.alignItems='center';
 
-        // rename
+        // Renommer
         const nameI = document.createElement('input');
         nameI.className = 'input';
         nameI.placeholder = 'Renommer';
@@ -49,13 +49,10 @@ export function renderAdminSlots(Sin){
         const saveB = document.createElement('button');
         saveB.className = 'btn small';
         saveB.textContent = 'Renommer';
-
         saveB.onclick = ()=>{
           const nv = (nameI.value||'').trim();
-          if(!nv) return;
-          if(nv===name) return;
-          if(S.settings.slots.includes(nv)) return;
-          // Propager aux items existants
+          if(!nv || nv===name || S.settings.slots.includes(nv)) return;
+          // Propager aux objets
           (S.items||[]).forEach(it=>{
             if(it && it.type==='equipment' && (it.slot||'')===name) it.slot = nv;
           });
@@ -64,7 +61,7 @@ export function renderAdminSlots(Sin){
           refresh();
         };
 
-        // move up/down
+        // Monter / Descendre
         const upB = document.createElement('button'); upB.className='btn small secondary'; upB.textContent='↑';
         const dnB = document.createElement('button'); dnB.className='btn small secondary'; dnB.textContent='↓';
         upB.disabled = idx===0;
@@ -72,10 +69,9 @@ export function renderAdminSlots(Sin){
         upB.onclick = ()=>{ move(S.settings.slots, idx, idx-1); State.save(S); refresh(); };
         dnB.onclick = ()=>{ move(S.settings.slots, idx, idx+1); State.save(S); refresh(); };
 
-        // delete
+        // Supprimer
         const delB = document.createElement('button'); delB.className='btn small danger'; delB.textContent='Supprimer';
         delB.onclick = ()=>{
-          // Option: ne pas supprimer si des items y sont rattachés ? On les laisse inchangés.
           S.settings.slots.splice(idx,1);
           State.save(S);
           refresh();
@@ -89,14 +85,13 @@ export function renderAdminSlots(Sin){
 
     // Ajouter
     const add = el('div','list-item small');
-    const l = document.createElement('div'); l.textContent='Ajouter'; add.appendChild(l);
+    const l = document.createElement('div'); l.textContent = 'Ajouter'; add.appendChild(l);
     const r = document.createElement('div'); r.style.display='flex'; r.style.gap='8px';
     const inp = document.createElement('input'); inp.className='input'; inp.placeholder='Nom du slot (ex. Tête)';
     const addB = document.createElement('button'); addB.className='btn'; addB.textContent='Ajouter';
     addB.onclick = ()=>{
       const nm = (inp.value||'').trim();
-      if(!nm) return;
-      if(S.settings.slots.includes(nm)) return;
+      if(!nm || S.settings.slots.includes(nm)) return;
       S.settings.slots.push(nm);
       State.save(S);
       inp.value='';
