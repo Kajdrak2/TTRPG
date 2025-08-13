@@ -1,273 +1,233 @@
-// js/views/player_inventory.js — 6.2.11
-// Badge 'Objets' calé SUR LE DOM: s'allume uniquement s'il existe des lignes de loot visibles.
-// Pas d'impact sur le state ni les autres fonctionnalités.
-import * as State from '../core/state.js';
+// js/views/player_inventory.js — Build A5 (actions réactives + affichage bonus équipements)
 import { el } from '../core/ui.js';
+import * as State from '../core/state.js';
 
-// ---------- Helpers UI ----------
-function fmt(secs){
-  secs = Math.max(0, Math.floor(+secs||0));
-  const d = Math.floor(secs/86400); secs%=86400;
-  const h = Math.floor(secs/3600); secs%=3600;
-  const m = Math.floor(secs/60); const s = secs%60;
-  const pad = n=> String(n).padStart(2,'0');
-  if(d>0) return `${d}j ${pad(h)}h ${pad(m)}m ${pad(s)}s`;
-  return `${h}h ${pad(m)}m ${pad(s)}s`;
+function secondsToHuman(sec){
+  sec = Math.max(0, Math.floor(+sec||0));
+  const d=Math.floor(sec/86400); sec%=86400;
+  const h=Math.floor(sec/3600); sec%=3600;
+  const m=Math.floor(sec/60); const s=sec%60;
+  const parts=[];
+  if(d) parts.push(d+'j');
+  if(h) parts.push(h+'h');
+  if(m) parts.push(m+'m');
+  if(s || parts.length===0) parts.push(s+'s');
+  return parts.join(' ');
 }
-const unequippedCount = (p,id)=> (p.inv||[]).filter(s=> s.itemId===id && !s.equipped).length;
-
-function modsSummary(mods){
-  if(!mods) return '';
-  const s = mods.stats||{}, c = mods.cats||{}, r = mods.resources||{};
-  const S = Object.keys(s).filter(k=> (+s[k]||0)!==0).map(k=> `${k} ${(s[k]>0?'+':'')}${s[k]}`);
-  const C = Object.keys(c).filter(k=> (+c[k]||0)!==0).map(k=> `${k} ${(c[k]>0?'+':'')}${c[k]}`);
-  const R = Object.keys(r).filter(k=> r[k] && (+(r[k].max||0)!==0 || +(r[k].start||0)!==0))
-              .map(k=>{ const t=r[k]; const a=`max ${(t.max>0?'+':'')}${+t.max||0}`; const b=(+(t.start||0)!==0?` / start ${(t.start>0?'+':'')}${+t.start||0}`:''); return `${k} ${a}${b}`; });
-  return [S.length?`Caracs: ${S.join(', ')}`:'', C.length?`Catég.: ${C.join(', ')}`:'', R.length?`Ress.: ${R.join(', ')}`:''].filter(Boolean).join(' · ');
-}
-
-// ---------- Badge DOM pur ----------
-function getObjectsTabButton(){
-  return document.getElementById('tab-objets')
-      || document.querySelector('.tab[data-id="p-inv"]')
-      || Array.from(document.querySelectorAll('.tab')).find(b=> (b.textContent||'').trim().toLowerCase()==='objets');
-}
-function setObjectsBadgeDOM(show){
-  const btn = getObjectsTabButton(); if(!btn) return;
-  let ind = btn.querySelector('.tab-ind');
-  if(!ind){
-    ind = document.createElement('span');
-    ind.className = 'tab-ind';
-    ind.textContent = '!';
-    Object.assign(ind.style, {
-      position:'absolute', top:'-6px', right:'-6px', width:'16px', height:'16px',
-      display:'none', borderRadius:'999px', alignItems:'center', justifyContent:'center',
-      fontSize:'11px', fontWeight:'700', background:'#f59e0b', color:'#0b1220',
-      boxShadow:'0 0 0 2px rgba(255,255,255,0.08)', lineHeight:'16px'
-    });
-    btn.style.position = 'relative';
-    btn.appendChild(ind);
-  }
-  ind.style.display = show ? 'flex' : 'none';
-  ind.dataset.visible = show ? '1' : '0';
+function typeLabel(it){ const t=it?.type||'misc'; if(t==='equipment') return 'Équipement'; if(t==='consumable') return 'Consommable'; return 'Divers'; }
+function effectSummary(it){
+  if(!it || !it.mods) return '';
+  const a=[];
+  const st = it.mods.stats||{}; const ks = Object.keys(st);
+  if(ks.length) a.push('Stats: '+ ks.map(k=> k+' '+(st[k]>=0?'+':'')+st[k]).join(', '));
+  const ct = it.mods.cats||{}; const kc = Object.keys(ct);
+  if(kc.length) a.push('Catégories: '+ kc.map(k=> k+' '+(ct[k]>=0?'+':'')+ct[k]).join(', '));
+  const rs = it.mods.resources||{}; const kr = Object.keys(rs);
+  if(kr.length) a.push('Ressources: '+ kr.map(k=> k+' max+='+(+rs[k].max||0)+' start+='+(+rs[k].start||0)).join(', '));
+  return a.join(' · ');
 }
 
-// ---------- Slots ----------
-function slotView(S,p,rerender){
-  const wrap = el('div','panel');
-  wrap.innerHTML = '<div class="list-item"><div><b>Équipé</b></div></div>';
-  const list = el('div','list'); wrap.appendChild(list);
-  const slots = S.settings?.slots || [];
-  if(slots.length===0){
-    const row = el('div','list-item small'); row.append(document.createElement('div'), document.createElement('div'));
-    row.children[0].innerHTML = '<b>(aucun slot défini)</b>';
-    row.children[1].textContent = '—';
-    list.appendChild(row);
-  }else{
-    slots.forEach(sl=>{
-      const row = el('div','list-item small'); row.append(document.createElement('div'), document.createElement('div'));
-      row.children[0].innerHTML = `<b>${sl}</b>`;
-      const right = row.children[1];
-      const equipped = (p.inv||[]).filter(s=> s.equipped).map(s=> State.getItemById(S,s.itemId)).filter(Boolean).filter(it=> (it.slot||(S.settings.slots[0]||'slot'))===sl);
-      if(equipped.length){
-        equipped.forEach(it=>{
-          const line = document.createElement('div'); line.style.display='grid'; line.style.gridTemplateColumns='1fr auto'; line.style.gap='8px'; line.style.alignItems='center';
-          const left = document.createElement('div');
-          const name = document.createElement('div'); name.innerHTML = `<b>${it.name}</b>`;
-          const mods = document.createElement('div'); mods.className='muted small'; mods.textContent = modsSummary(it.mods||{});
-          left.append(name,mods);
-          const btn = document.createElement('button'); btn.className='btn small'; btn.textContent='Retirer';
-          btn.onclick = ()=>{ State.unequipSlot(S,p,(it.slot||(S.settings.slots[0]||'slot'))); State.save(S); rerender&&rerender(); };
-          line.append(left, btn);
-          right.appendChild(line);
-        });
-      }else{
-        right.textContent = '—';
+export function renderPlayerInventory(){
+  const S = State.get();
+  const pIndex = 0;
+  const p = (S.players||[])[pIndex] || null;
+  const root = el('div');
+
+  const refresh = ()=>{
+    // rebuild whole view from latest state
+    const S2 = State.get();
+    while(root.firstChild) root.removeChild(root.firstChild);
+    build(S2);
+  };
+
+  function build(Sn){
+    const player = (Sn.players||[])[pIndex] || null;
+
+    
+  // -------- Effets actifs (consommables en cours)
+  let _effInterval;
+  (function(){
+    const pnl = el('div','panel'); pnl.innerHTML = '<div class="list-item"><div><b>Effets actifs</b></div><div class="muted small">Consommables en cours</div></div>';
+    const list = el('div','list'); pnl.appendChild(list); root.appendChild(pnl);
+    function renderEffects(){
+      list.innerHTML='';
+      const Sx = State.get();
+      const effs = (State.effectListForPlayer && State.effectListForPlayer(Sx, pIndex)) || [];
+      if(!effs.length){
+        const empty = el('div','list-item small muted'); empty.textContent='(aucun)';
+        list.appendChild(empty);
+        return;
       }
-      list.appendChild(row);
-    });
-  }
-  return wrap;
-}
-
-// ---------- Carte item ----------
-function itemCard(S, p, it, onChange){
-  const qty = unequippedCount(p, it.id);
-  const card = el('div','panel');
-  const head = el('div','list-item');
-  const left = document.createElement('div'); left.innerHTML = `<b>${it.name}</b>`;
-  const slot = (it && it.type==='equipment') ? (it.slot||(S.settings.slots[0]||'slot')) : null;
-  const meta = it.type==='consumable' ? 'Consommable' : ('Équipement'+(slot?` — ${slot}`:''));
-  const right = document.createElement('div'); right.className='muted small'; right.textContent = meta + (it.type==='equipment' ? (qty>0?` · x${qty}`:' · x0') : (qty>1?` · x${qty}`:''));
-  head.append(left,right); card.appendChild(head);
-
-  const row = el('div','list-item small');
-  const desc = el('div'); desc.className='muted small'; desc.textContent = it.desc || '—';
-  const actions = el('div'); actions.style.display='flex'; actions.style.gap='8px'; actions.style.flexWrap='wrap';
-
-  const modsLine = document.createElement('div'); modsLine.className='muted small'; modsLine.textContent = modsSummary(it.mods||{});
-
-  if(it.type==='equipment'){
-    const eqBtn = document.createElement('button'); eqBtn.className='btn small'; eqBtn.textContent = 'Équiper 1';
-    eqBtn.disabled = qty<=0;
-    eqBtn.onclick = ()=>{ 
-      const ok = State.equipOne(S,p,it.id);
-      if(!ok) alert('Aucune copie non équipée.');
-      State.save(S);
-      onChange && onChange();
-    };
-    const rmBtn = document.createElement('button'); rmBtn.className='btn danger small'; rmBtn.textContent='Retirer 1';
-    rmBtn.onclick = ()=>{ const idx = (p.inv||[]).findIndex(s=> s.itemId===it.id && !s.equipped); if(idx>=0){ p.inv.splice(idx,1); State.save(S); onChange && onChange(); } };
-    actions.append(eqBtn, rmBtn);
-  }else{
-    const tid = (p.cooldowns||{})[it.id];
-    const rem = tid ? State.timerRemaining(S, tid) : 0;
-    const cdTxt = document.createElement('span'); cdTxt.className='muted small jdr-cd'; cdTxt.dataset.tid = tid || ''; cdTxt.textContent = tid?(`Cooldown: ${fmt(rem)}`):'';
-    const useBtn = document.createElement('button'); useBtn.className='btn small'; useBtn.textContent = 'Utiliser';
-    useBtn.disabled = (rem>0) || (unequippedCount(p,it.id)<=0);
-    useBtn.onclick = ()=>{
-      const idx = (p.inv||[]).findIndex(s=> s.itemId===it.id && !s.equipped);
-      if(idx>=0){ p.inv.splice(idx,1); }
-      State.createEffectFromItem(S, (S.players||[]).indexOf(p), it);
-      State.startCooldown(S, p, it);
-      State.save(S);
-      onChange && onChange();
-    };
-    actions.append(useBtn, cdTxt);
-  }
-
-  const leftCol = document.createElement('div');
-  leftCol.append(desc, modsLine);
-  row.append(leftCol,actions); card.appendChild(row);
-  return card;
-}
-
-// ---------- Rendu principal ----------
-export function renderPlayerInventory(S){
-  const box = el('div');
-  const p = (S.players||[])[0];
-  if(!p){ const warn = el('div','panel'); warn.innerHTML='<div class="list-item"><div>Pas de joueur. Va dans Admin → Joueurs.</div></div>'; return warn; }
-
-  const tl = document.createElement('h3'); tl.textContent = 'Objets'; box.appendChild(tl);
-
-  const slotsPanel = el('div'); box.appendChild(slotsPanel);
-  const lootPanel  = el('div'); box.appendChild(lootPanel);
-  const effPanel   = el('div'); box.appendChild(effPanel);
-  const invPanel   = el('div'); box.appendChild(invPanel);
-
-  function refreshBadgeFromDOM(){
-    // Si au moins une ligne de loot existe dans le DOM, badge ON.
-    const hasLootRow = !!lootPanel.querySelector('.jdr-loot-row');
-    setObjectsBadgeDOM(hasLootRow);
-  }
-
-  function render(){
-    // Slots
-    slotsPanel.innerHTML=''; slotsPanel.appendChild(slotView(S,p, render));
-
-    // Lootbox
-    State.ensureLootbox && State.ensureLootbox(S);
-    lootPanel.innerHTML='';
-    const lootWrap = el('div','panel');
-    lootWrap.innerHTML = '<div class="list-item"><div><b>Butin disponible</b></div></div>';
-    const list = el('div','list'); lootWrap.appendChild(list);
-
-    const stacks = (S.lootbox||[]).filter(st=> (+st?.qty||0)>0);
-    if(stacks.length===0){
-      const e=el('div','muted small'); e.style.padding='8px 12px'; e.textContent='Aucun item à récupérer.'; list.appendChild(e);
-    }else{
-      stacks.forEach(st=>{
-        const it = State.getItemById(S, st.itemId); if(!it) return;
-        const row = el('div','list-item small jdr-loot-row'); // <-- marqueur DOM
-        row.append(document.createElement('div'), document.createElement('div'));
-        row.children[0].innerHTML = `<b>${it.name}</b> <span class="muted small">x${st.qty}</span>`;
-        const qtyI = document.createElement('input'); qtyI.type='number'; qtyI.className='input'; qtyI.style.width='80px'; qtyI.value='1';
-        qtyI.min='1'; qtyI.max=String(+st.qty||1);
-        qtyI.addEventListener('input', ()=>{
-          let v = Math.floor(+qtyI.value||0), max = Math.max(1, +st.qty||1);
-          if(v<1) v=1; if(v>max) v=max; qtyI.value = String(v);
-        });
-        const takeB = document.createElement('button'); takeB.className='btn small'; takeB.textContent='Prendre';
-        takeB.onclick = ()=>{
-          const max = Math.max(0, +st.qty||0);
-          let n = Math.max(0, Math.floor(+qtyI.value||0)); if(n>max) n=max;
-          const got = State.lootboxTake(S, st.itemId, n);
-          for(let i=0;i<got;i++){ State.addItemToPlayer(S, p, st.itemId); }
-          State.save(S);
-          render(); // re-render -> mettra à jour le DOM + badge
-        };
-        row.children[1].append(qtyI, takeB);
+      const byId = {}; (Sx.items||[]).forEach(it=>{ if(it && it.id) byId[String(it.id)] = it; });
+      effs.forEach(eff=>{
+        const it = byId[String(eff.itemId)] || null;
+        const row = el('div','list-item small');
+        const left = document.createElement('div');
+        const title = document.createElement('div'); title.innerHTML = '<b>'+(it?.name || eff.name || 'Effet')+'</b>';
+        const sub = document.createElement('div'); sub.className='muted small';
+        const rem = State.timerRemaining(Sx, eff.timerId);
+        const parts = ['Reste: '+secondsToHuman(rem)]; 
+        if(it){ 
+          const es = (it.mods? ( (it.mods.stats&&Object.keys(it.mods.stats).length)? 'Stats: '+Object.keys(it.mods.stats).map(k=>k+' '+(it.mods.stats[k]>=0?'+':'')+it.mods.stats[k]).join(', ') : '' ) : '' );
+          const ec = (it.mods? ( (it.mods.cats&&Object.keys(it.mods.cats).length)? 'Catégories: '+Object.keys(it.mods.cats).map(k=>k+' '+(it.mods.cats[k]>=0?'+':'')+it.mods.cats[k]).join(', ') : '' ) : '' );
+          const er = (it.mods? ( (it.mods.resources&&Object.keys(it.mods.resources).length)? 'Ressources: '+Object.keys(it.mods.resources).map(k=>k+' max+='+(+it.mods.resources[k].max||0)+' start+='+(+it.mods.resources[k].start||0)).join(', ') : '' ) : '' );
+          [es,ec,er].forEach(x=>{ if(x) parts.push(x); });
+        }
+        sub.textContent = parts.join(' — ');
+        left.append(title, sub);
+        const right = document.createElement('div');
+        const cancelB = document.createElement('button'); cancelB.className='btn small secondary'; cancelB.textContent='Annuler';
+        cancelB.onclick = ()=>{ cancelB.disabled=true; State.cancelEffect(State.get(), eff.id); State.save(State.get()); renderEffects(); };
+        right.append(cancelB);
+        row.append(left, right);
         list.appendChild(row);
       });
     }
-    lootPanel.appendChild(lootWrap);
-
-    // Effets actifs
-    effPanel.innerHTML='';
+    renderEffects();
+    if(_effInterval) clearInterval(_effInterval);
+    _effInterval = setInterval(renderEffects, 1000);
+  })();
+// -------- Équipement
     (function(){
-      const wrap = el('div','panel');
-      wrap.innerHTML = '<div class="list-item"><div><b>Effets actifs (consommables)</b></div></div>';
-      const list = el('div','list'); wrap.appendChild(list);
-      const pIndex = (S.players||[]).indexOf(p);
-      const effs = State.effectListForPlayer ? State.effectListForPlayer(S, pIndex) : [];
-      if(!effs || effs.length===0){
-        const e=el('div','muted small'); e.style.padding='8px 12px'; e.textContent='Aucun effet actif.'; list.appendChild(e);
-      }else{
-        effs.forEach(eff=>{
-          const it = State.getItemById(S, eff.itemId);
-          const row = el('div','list-item small'); row.append(document.createElement('div'), document.createElement('div'));
-          const name = it ? it.name : eff.name || 'Effet';
-          const rem  = State.timerRemaining(S, eff.timerId);
-          const left = row.children[0];
-          const title = document.createElement('div'); title.innerHTML = `<b>${name}</b> <span class="muted small jdr-eff" data-tid="${eff.timerId}">— reste ${fmt(rem)}</span>`;
-          const mods  = document.createElement('div'); mods.className='muted small'; mods.textContent = modsSummary((eff.mods)||{});
-          left.append(title, mods);
-          const stopB = document.createElement('button'); stopB.className='btn danger small'; stopB.textContent='Annuler';
-          stopB.onclick = ()=>{ State.cancelEffect(S, eff.id); State.save(S); render(); };
-          row.children[1].appendChild(stopB);
+      const pnl = el('div','panel'); pnl.innerHTML = '<div class="list-item"><div><b>Équipement</b></div></div>';
+      const list = el('div','list'); pnl.appendChild(list); root.appendChild(pnl);
+      const slots = Array.isArray(Sn?.settings?.slots) && Sn.settings.slots.length ? Sn.settings.slots.slice() : ['slot'];
+      if(!player){
+        const empty = el('div','list-item small muted'); empty.textContent='(aucun joueur)';
+        list.appendChild(empty); return;
+      }
+      slots.forEach(slotName=>{
+        const row = el('div','list-item small');
+        const left = document.createElement('div'); left.textContent = slotName;
+        const right = document.createElement('div'); right.style.display='flex'; right.style.gap='8px'; right.style.alignItems='center';
+        const slotItem = (player.inv||[]).find(s=>{
+          const it = (Sn.items||[]).find(ii=> String(ii.id)===String(s.itemId));
+          if(!it || it.type!=='equipment') return false;
+          const sl = it.slot || slots[0];
+          return s.equipped && sl===slotName;
+        });
+        if(slotItem){
+          const it = (Sn.items||[]).find(ii=> String(ii.id)===String(slotItem.itemId));
+          const name = document.createElement('span'); name.innerHTML = '<b>'+(it?.name || ('Objet '+slotItem.itemId))+'</b>';
+          const bonus = document.createElement('span'); bonus.className='muted small'; const eff = effectSummary(it); if(eff) bonus.textContent=' — '+eff;
+          const unB  = document.createElement('button'); unB.className='btn small secondary'; unB.textContent='Retirer';
+          unB.onclick = ()=>{ unB.disabled=true; State.unequipSlot(Sn,player,slotName); State.save(Sn); refresh(); };
+          right.append(name, bonus, unB);
+        }else{
+          const em = document.createElement('span'); em.className='muted small'; em.textContent='(vide)';
+          right.appendChild(em);
+        }
+        row.append(left,right); list.appendChild(row);
+      });
+    })();
+
+    // -------- Sac (agrégé) avec actions
+    (function(){
+      const pnl = el('div','panel'); pnl.innerHTML = '<div class="list-item"><div><b>Sac</b></div></div>';
+      const list = el('div','list'); pnl.appendChild(list); root.appendChild(pnl);
+      if(!player){
+        const empty = el('div','list-item small muted'); empty.textContent='(aucun joueur)';
+        list.appendChild(empty); return;
+      }
+      const agg = {};
+      (player.inv||[]).forEach(s=>{ if(s.equipped) return; const id=String(s.itemId); agg[id]=(agg[id]||0)+1; });
+      const byId = {}; (Sn.items||[]).forEach(it=>{ if(it && it.id) byId[String(it.id)] = it; });
+      const ids = Object.keys(agg);
+      if(!ids.length){ const empty = el('div','list-item small muted'); empty.textContent='(vide)'; list.appendChild(empty); }
+      ids.forEach(id=>{
+        const it = byId[id]; const qty = agg[id]||0;
+        const row = el('div','list-item small');
+        const left = document.createElement('div');
+        const title = document.createElement('div'); title.innerHTML = '<b>'+(it?.name||('Objet '+id))+'</b> × '+qty;
+        const sub = document.createElement('div'); sub.className='muted small';
+        if(it?.type==='consumable'){
+          const parts = [];
+          if(it.durationSec) parts.push('Durée: '+secondsToHuman(it.durationSec));
+          const eff = effectSummary(it); if(eff) parts.push(eff);
+          sub.textContent = parts.join(' — ') || 'Consommable';
+        }else{
+          const eff = effectSummary(it);
+          sub.textContent = eff ? (typeLabel(it)+' — '+eff) : typeLabel(it);
+        }
+        left.append(title, sub);
+
+        const right = document.createElement('div'); right.style.display='flex'; right.style.gap='8px';
+        if(it){
+          if(it.type==='equipment'){
+            const eqB=document.createElement('button'); eqB.className='btn small'; eqB.textContent='Équiper';
+            eqB.onclick=()=>{ eqB.disabled=true; State.equipOne(Sn, player, it.id); State.save(Sn); refresh(); };
+            right.append(eqB);
+          }
+          if(it.type==='consumable'){
+            const cdActive = State.isCooldownActive(Sn, player, it.id);
+            const useB=document.createElement('button'); useB.className='btn small'; useB.textContent= cdActive ? 'Recharge…' : 'Utiliser';
+            useB.disabled = !!cdActive;
+            useB.onclick=()=>{
+              useB.disabled=true;
+              // retirer 1 exemplaire non équipé
+              const idx = (player.inv||[]).findIndex(s=> !s.equipped && String(s.itemId)===String(it.id));
+              if(idx>=0){ player.inv.splice(idx,1); }
+              State.createEffectFromItem(Sn, pIndex, it);
+              State.startCooldown(Sn, player, it);
+              State.save(Sn);
+              refresh();
+            };
+            right.append(useB);
+          }
+        }
+
+        row.append(left, right);
+        list.appendChild(row);
+      });
+    })();
+
+    // -------- Lootbox (prendre)
+    (function(){
+      State.ensureLootbox(Sn);
+      const byId = {}; (Sn.items||[]).forEach(it=>{ if(it && it.id) byId[String(it.id)] = it; });
+      const pnl = el('div','panel'); pnl.innerHTML = '<div class="list-item"><div><b>Lootbox</b></div><div class="muted small">Objets disponibles</div></div>';
+      const list = el('div','list'); pnl.appendChild(list); root.appendChild(pnl);
+
+      if(!Sn.lootbox || !Sn.lootbox.length){
+        const empty = el('div','list-item small muted'); empty.textContent = '(vide)';
+        list.appendChild(empty);
+      } else {
+        Sn.lootbox.forEach(st=>{
+          const it = byId[String(st.itemId)] || null;
+          const row = el('div','list-item small');
+          const left = el('div');
+          const name = document.createElement('div'); name.innerHTML = '<b>'+(it?.name||('Objet '+String(st.itemId)))+'</b> × '+(st.qty||0);
+          const sub = document.createElement('div'); sub.className='muted small';
+          let subParts = [ typeLabel(it) ];
+          if(it && it.type==='consumable'){
+            if(it.durationSec) subParts.push('Durée: '+secondsToHuman(it.durationSec));
+            const eff = effectSummary(it); if(eff) subParts.push(eff);
+          } else if(it && it.type==='equipment'){
+            const eff = effectSummary(it); if(eff) subParts.push(eff);
+          }
+          sub.textContent = subParts.join(' — ');
+          left.append(name, sub);
+          const right = document.createElement('div'); right.style.display='flex'; right.style.gap='8px';
+          const qtyI = document.createElement('input'); qtyI.type='number'; qtyI.className='input'; qtyI.min=1; qtyI.value=1; qtyI.style.width='70px'; qtyI.max = (st.qty||1); qtyI.oninput=()=>{ if(+qtyI.value > (st.qty||0)) qtyI.value = st.qty||0; if(+qtyI.value<1) qtyI.value=1; };
+          const takeB = document.createElement('button'); takeB.className='btn small'; takeB.textContent='Prendre'; if(!(st.qty>0)) takeB.disabled=true;
+          takeB.onclick = ()=>{
+            takeB.disabled=true;
+            const n = Math.max(1, Math.floor(+qtyI.value||0));
+            const taken = State.lootboxTake(Sn, st.itemId, n);
+            const pl = (Sn.players||[])[pIndex]; if(pl){ for(let i=0;i<taken;i++) State.addItemToPlayer(Sn, pl, st.itemId); }
+            State.save(Sn);
+            refresh();
+          };
+          right.append(qtyI, takeB);
+          row.append(left, right);
           list.appendChild(row);
         });
       }
-      effPanel.appendChild(wrap);
     })();
+  } // build
 
-    // Inventaire (copies non équipées)
-    invPanel.innerHTML='';
-    const wrapInv = el('div','panel');
-    wrapInv.innerHTML = '<div class="list-item"><div><b>Inventaire</b></div></div>';
-    const listInv = el('div','list'); wrapInv.appendChild(listInv);
-    const ownedUneq = (p.inv||[]).filter(s=> !s.equipped).map(s=> s.itemId);
-    const uniq = Array.from(new Set(ownedUneq));
-    if(uniq.length===0){
-      const e=el('div','muted small'); e.style.padding='8px 12px'; e.textContent='Inventaire vide.'; listInv.appendChild(e);
-    }else{
-      uniq.forEach(id=>{ const it = State.getItemById(S,id); if(!it) return; listInv.appendChild(itemCard(S,p,it, render)); });
-    }
-    invPanel.appendChild(wrapInv);
-
-    // met le badge selon le DOM actuel
-    refreshBadgeFromDOM();
-  }
-  render();
-
-  // tick visuel pour timers + badge dom (au cas où du loot arrive par un autre onglet)
-  if(typeof window!=='undefined'){
-    if(window.__JDR_INV_TICK__) clearInterval(window.__JDR_INV_TICK__);
-    window.__JDR_INV_TICK__ = setInterval(()=>{
-      document.querySelectorAll('.jdr-eff').forEach(span=>{
-        const tid = span.dataset.tid; if(!tid) return;
-        const rem = State.timerRemaining(S, tid);
-        span.textContent = '— reste '+fmt(rem);
-      });
-      // badge DOM recalculé
-      const btn = getObjectsTabButton();
-      if(btn){ // seulement si les tabs existent
-        const hasLootRow = !!document.querySelector('.panel .jdr-loot-row');
-        setObjectsBadgeDOM(hasLootRow);
-      }
-    }, 1000);
-  }
-
-  return box;
+  build(S);
+  return root;
 }
+
 export default renderPlayerInventory;

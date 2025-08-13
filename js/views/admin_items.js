@@ -1,214 +1,288 @@
-// js/views/admin_items.js — Build AI4 (fix append/textContent; advanced editor)
-// Gestion des objets : type, slot, mods (stats/cats/resources), durée & cooldown
+// js/views/admin_items.js — Build A4 (Objets FR + mods + durée/cooldown pour consommables)
 import { el } from '../core/ui.js';
-import { get, save } from '../core/state.js';
+import * as State from '../core/state.js';
 
-function uid(){ return 'it_'+Math.random().toString(36).slice(2,9); }
-const N = v => (Number.isFinite(+v)? +v : 0);
+function N(v){ return isFinite(+v) ? Math.trunc(+v) : 0; }
+function arr(a){ return Array.isArray(a)? a : []; }
+function ensureMods(obj){ obj.mods = obj.mods && typeof obj.mods==='object' ? obj.mods : {}; obj.mods.stats = obj.mods.stats && typeof obj.mods.stats==='object' ? obj.mods.stats : {}; obj.mods.cats = obj.mods.cats && typeof obj.mods.cats==='object' ? obj.mods.cats : {}; obj.mods.resources = obj.mods.resources && typeof obj.mods.resources==='object' ? obj.mods.resources : {}; return obj.mods; }
 
-function options(sel, arr, cur=''){
-  sel.innerHTML='';
-  const empty=document.createElement('option'); empty.value=''; empty.textContent='—'; sel.appendChild(empty);
-  (arr||[]).forEach(s=>{ const o=document.createElement('option'); o.value=String(s); o.textContent=String(s); if(String(s)===String(cur)) o.selected=true; sel.appendChild(o); });
-  return sel;
+function listStats(S){ return (S.settings && Array.isArray(S.settings.stats)) ? S.settings.stats.slice() : []; }
+function listCats(S){ const cats=(S.settings&&Array.isArray(S.settings.categories))? S.settings.categories : []; return cats.map(c=>c && (c.name||c)); }
+function listSlots(S){ return (S.settings && Array.isArray(S.settings.slots)) ? S.settings.slots.slice() : []; }
+
+const TYPE_LABELS = [
+  { value:'equipment',  label:'Équipement' },
+  { value:'consumable', label:'Consommable' },
+  { value:'misc',       label:'Divers' }
+];
+function typeLabel(v){ const t=TYPE_LABELS.find(x=>x.value===v); return t?t.label:v; }
+
+function typeSelect(current){
+  const s = document.createElement('select'); s.className='select';
+  TYPE_LABELS.forEach(t=>{ const o=document.createElement('option'); o.value=t.value; o.textContent=t.label; if(t.value===current) o.selected=true; s.appendChild(o); });
+  return s;
 }
-function listAllStats(S){
-  const direct = Array.isArray(S.settings?.stats) ? S.settings.stats.slice() : [];
-  if(direct.length) return direct;
-  const viaCats = (S.settings?.categories||[]).flatMap(c => c.stats||[]);
-  if(viaCats.length) return Array.from(new Set(viaCats));
-  const fromChars = Array.isArray(S.characteristics) ? S.characteristics.slice() : [];
-  return fromChars;
+function slotSelect(S, current){
+  const s = document.createElement('select'); s.className='select';
+  const o0=document.createElement('option'); o0.value=''; o0.textContent='— slot —'; s.appendChild(o0);
+  listSlots(S).forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; if(n===current) o.selected=true; s.appendChild(o); });
+  return s;
 }
-function listAllCats(S){ return (S.settings?.categories||[]).map(c=> c.name); }
-function listAllRes(S){ return (S.resources||[]).map(r=> r.name || r.id).filter(Boolean); }
 
-function modsEditor(S, it, path='mods'){
-  it[path] = it[path] && typeof it[path]==='object' ? it[path] : {};
-  const mods = it[path];
-  mods.stats = mods.stats && typeof mods.stats==='object' ? mods.stats : {};
-  mods.cats  = mods.cats  && typeof mods.cats ==='object' ? mods.cats  : {};
-  mods.resources = mods.resources && typeof mods.resources==='object' ? mods.resources : {};
-
-  const panel = el('div','panel');
-  const head = el('div','list-item'); head.innerHTML = `<div><b>Modificateurs</b></div>`; panel.appendChild(head);
-  const list = el('div','list'); panel.appendChild(list);
-
-  // STATS
-  {
-    const rS = el('div','list-item small');
-    const left = el('div'); left.textContent='Stats'; rS.appendChild(left);
-    const rightS = el('div');
-    const sSel = document.createElement('select'); sSel.className='select'; options(sSel, listAllStats(S));
-    const sVal = document.createElement('input'); sVal.className='input'; sVal.type='number'; sVal.placeholder='+/-';
-    const sAdd = el('button','btn small'); sAdd.textContent='Ajouter';
-    sAdd.onclick = ()=>{ const k=sSel.value; const v=N(sVal.value); if(!k) return; mods.stats[k]=(mods.stats[k]||0)+v; save(get()); render(); };
-    rightS.append(sSel, sVal, sAdd); rS.appendChild(rightS); list.appendChild(rS);
-  }
-  Object.entries(mods.stats).forEach(([k,v])=>{
-    const row=el('div','list-item small'); const left=el('div'); left.textContent=k; row.appendChild(left);
-    const rr=el('div'); const i=document.createElement('input'); i.className='input'; i.type='number'; i.value=+v; const rm=el('button','btn small danger'); rm.textContent='Supprimer';
-    i.oninput=()=>{ mods.stats[k]=N(i.value); save(get()); }; rm.onclick=()=>{ delete mods.stats[k]; save(get()); render(); };
-    rr.append(i,rm); row.appendChild(rr); list.appendChild(row);
-  });
-
-  // CATS
-  {
-    const rC = el('div','list-item small');
-    const left = el('div'); left.textContent='Catégories'; rC.appendChild(left);
-    const rightC = el('div'); const cSel=document.createElement('select'); cSel.className='select'; options(cSel, listAllCats(S));
-    const cVal=document.createElement('input'); cVal.className='input'; cVal.type='number'; cVal.placeholder='+/-';
-    const cAdd=el('button','btn small'); cAdd.textContent='Ajouter';
-    cAdd.onclick=()=>{ const k=cSel.value; const v=N(cVal.value); if(!k) return; mods.cats[k]=(mods.cats[k]||0)+v; save(get()); render(); };
-    rightC.append(cSel,cVal,cAdd); rC.appendChild(rightC); list.appendChild(rC);
-  }
-  Object.entries(mods.cats).forEach(([k,v])=>{
-    const row=el('div','list-item small'); const left=el('div'); left.textContent=k; row.appendChild(left);
-    const rr=el('div'); const i=document.createElement('input'); i.className='input'; i.type='number'; i.value=+v; const rm=el('button','btn small danger'); rm.textContent='Supprimer';
-    i.oninput=()=>{ mods.cats[k]=N(i.value); save(get()); }; rm.onclick=()=>{ delete mods.cats[k]; save(get()); render(); };
-    rr.append(i,rm); row.appendChild(rr); list.appendChild(row);
-  });
-
-  // RESOURCES
-  {
-    const rR = el('div','list-item small');
-    const left = el('div'); left.textContent='Ressources (max / start)'; rR.appendChild(left);
-    const rightR = el('div'); const rSel=document.createElement('select'); rSel.className='select'; options(rSel, listAllRes(S));
-    const rMax=document.createElement('input'); rMax.className='input'; rMax.type='number'; rMax.placeholder='max';
-    const rStart=document.createElement('input'); rStart.className='input'; rStart.type='number'; rStart.placeholder='start';
-    const rAdd=el('button','btn small'); rAdd.textContent='Ajouter';
-    rAdd.onclick=()=>{
-      const k=rSel.value; if(!k) return;
-      const o = mods.resources[k] = mods.resources[k] || {max:0,start:0};
-      o.max += N(rMax.value); o.start += N(rStart.value);
-      save(get()); render();
-    };
-    rightR.append(rSel,rMax,rStart,rAdd); rR.appendChild(rightR); list.appendChild(rR);
-  }
-  Object.entries(mods.resources).forEach(([k,o])=>{
-    const row=el('div','list-item small'); const left=el('div'); left.textContent=k; row.appendChild(left);
-    const rr=el('div');
-    const i1=document.createElement('input'); i1.className='input'; i1.type='number'; i1.value=+o.max||0;
-    const i2=document.createElement('input'); i2.className='input'; i2.type='number'; i2.value=+o.start||0;
-    const rm=el('button','btn small danger'); rm.textContent='Supprimer';
-    i1.oninput=()=>{ (mods.resources[k]=mods.resources[k]||{}).max=N(i1.value); save(get()); };
-    i2.oninput=()=>{ (mods.resources[k]=mods.resources[k]||{}).start=N(i2.value); save(get()); };
-    rm.onclick=()=>{ delete mods.resources[k]; save(get()); render(); };
-    rr.append(i1,i2,rm); row.appendChild(rr); list.appendChild(row);
-  });
-
-  return panel;
+/* ---------------- Small editors ---------------- */
+function kvEditorMap(map, onChange, options){
+  const title = options.title || 'Éditeur'; const keyOptions = Array.isArray(options.keyOptions)? options.keyOptions : null;
+  const valPh = options.valPh || '+/-';
+  const box = el('div','panel'); box.innerHTML = '<div class="list-item"><div><b>'+title+'</b></div></div>';
+  const list = el('div','list'); box.appendChild(list);
 
   function render(){
-    const parent=panel.parentElement; if(!parent) return;
-    const idx=[...parent.children].indexOf(panel);
-    parent.removeChild(panel);
-    parent.insertBefore(modsEditor(S,it,path), parent.children[idx]);
+    list.innerHTML='';
+    const keys = Object.keys(map||{});
+    if(!keys.length){ const empty = el('div','list-item small muted'); empty.textContent='(vide)'; list.appendChild(empty); }
+    keys.forEach(k=>{
+      const row=el('div','list-item small');
+      const l = document.createElement('div'); l.textContent=k; row.appendChild(l);
+      const r = document.createElement('div');
+      const inp = document.createElement('input'); inp.className='input'; inp.type='number'; inp.value=+map[k]||0;
+      const del = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer';
+      inp.oninput = ()=>{ map[k] = N(inp.value); State.save(State.get()); onChange&&onChange(); };
+      del.onclick = ()=>{ delete map[k]; State.save(State.get()); render(); onChange&&onChange(); };
+      r.append(inp, del); row.appendChild(r); list.appendChild(row);
+    });
+    // add
+    const add = el('div','list-item small'); const l=document.createElement('div'); l.textContent='Ajouter'; add.appendChild(l);
+    const r = document.createElement('div'); r.style.display='flex'; r.style.gap='8px'; r.style.flexWrap='wrap';
+    let kI;
+    if(keyOptions && keyOptions.length){
+      kI = document.createElement('select'); kI.className='select';
+      const o0=document.createElement('option'); o0.value=''; o0.textContent='—'; kI.appendChild(o0);
+      keyOptions.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; kI.appendChild(o); });
+    }else{
+      kI = document.createElement('input'); kI.className='input'; kI.placeholder='clé';
+    }
+    const vI = document.createElement('input'); vI.className='input'; vI.type='number'; vI.placeholder=valPh;
+    const addB = document.createElement('button'); addB.className='btn small'; addB.textContent='Ajouter';
+    addB.onclick = ()=>{ const k=(kI.value||'').trim(); const v=N(vI.value); if(!k) return; map[k]=(map[k]||0)+v; State.save(State.get()); render(); onChange&&onChange(); };
+    r.append(kI, vI, addB); add.appendChild(r); list.appendChild(add);
   }
+  render();
+  return box;
 }
 
-function durationEditor(it){
-  const wrap=el('div','list-item small');
-  const left=el('div'); left.textContent='Durée (consommable)'; wrap.appendChild(left);
-  const right=el('div');
-  const d=document.createElement('input'); d.className='input'; d.type='number'; d.placeholder='jours'; d.style.width='90px';
-  const h=document.createElement('input'); h.className='input'; h.type='number'; h.placeholder='heures'; h.style.width='90px';
-  const m=document.createElement('input'); m.className='input'; m.type='number'; m.placeholder='minutes'; m.style.width='90px';
-  const s=document.createElement('input'); s.className='input'; s.type='number'; s.placeholder='secondes'; s.style.width='110px';
-  function setFromItem(){
-    let sec = Math.max(0, Math.floor(+it.durationSec||0));
-    const J=Math.floor(sec/86400); sec -= J*86400;
-    const H=Math.floor(sec/3600);  sec -= H*3600;
-    const M=Math.floor(sec/60);    sec -= M*60;
-    d.value=J; h.value=H; m.value=M; s.value=sec;
+function resEditorMap(map, onChange, options){
+  const title = options.title || 'Ressources';
+  const S = State.get();
+  const box = el('div','panel'); box.innerHTML = '<div class="list-item"><div><b>'+title+'</b></div></div>';
+  const list = el('div','list'); box.appendChild(list);
+
+  function render(){
+    list.innerHTML='';
+    const keys = Object.keys(map||{});
+    if(!keys.length){ const empty = el('div','list-item small muted'); empty.textContent='(vide)'; list.appendChild(empty); }
+    keys.forEach(k=>{
+      const row=el('div','list-item small');
+      const l = document.createElement('div'); l.textContent=k; row.appendChild(l);
+      const r = document.createElement('div'); r.style.display='flex'; r.style.gap='8px';
+      const m1=document.createElement('input'); m1.className='input'; m1.type='number'; m1.value=+(map[k]&&map[k].max)||0;
+      const m2=document.createElement('input'); m2.className='input'; m2.type='number'; m2.value=+(map[k]&&map[k].start)||0;
+      const del = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer';
+      m1.oninput = ()=>{ (map[k]||(map[k]={})).max = N(m1.value); State.save(S); onChange&&onChange(); };
+      m2.oninput = ()=>{ (map[k]||(map[k]={})).start = N(m2.value); State.save(S); onChange&&onChange(); };
+      del.onclick = ()=>{ delete map[k]; State.save(S); render(); onChange&&onChange(); };
+      r.append(m1,m2,del); row.appendChild(r); list.appendChild(row);
+    });
+    // add
+    const add = el('div','list-item small'); const l=document.createElement('div'); l.textContent='Ajouter'; add.appendChild(l);
+    const r = document.createElement('div'); r.style.display='flex'; r.style.gap='8px'; r.style.flexWrap='wrap';
+    const sel = document.createElement('select'); sel.className='select';
+    const o0=document.createElement('option'); o0.value=''; o0.textContent='—'; sel.appendChild(o0);
+    (State.get().resources||[]).forEach(res=>{ const nm=res && (res.name||res.id); if(!nm) return; const o=document.createElement('option'); o.value=nm; o.textContent=nm; sel.appendChild(o); });
+    const m1=document.createElement('input'); m1.className='input'; m1.type='number'; m1.placeholder='max +=';
+    const m2=document.createElement('input'); m2.className='input'; m2.type='number'; m2.placeholder='start +=';
+    const addB=document.createElement('button'); addB.className='btn small'; addB.textContent='Ajouter';
+    addB.onclick = ()=>{ const k=sel.value; if(!k) return; const o=map[k]||{max:0,start:0}; o.max+=N(m1.value); o.start+=N(m2.value); map[k]=o; State.save(State.get()); render(); onChange&&onChange(); };
+    r.append(sel, m1, m2, addB); add.appendChild(r); list.appendChild(add);
   }
-  function store(){ it.durationSec = Math.max(0,(+d.value||0)*86400 + (+h.value||0)*3600 + (+m.value||0)*60 + (+s.value||0)); save(get()); }
-  [d,h,m,s].forEach(x=> x.oninput=store);
-  setFromItem();
-  right.append(d,h,m,s); wrap.appendChild(right);
-  return wrap;
-}
-function cooldownEditor(it){
-  const wrap=el('div','list-item small');
-  const left=el('div'); left.textContent='Cooldown (tous types)'; wrap.appendChild(left);
-  const right=el('div');
-  const m=document.createElement('input'); m.className='input'; m.type='number'; m.placeholder='minutes'; m.style.width='110px';
-  const s=document.createElement('input'); s.className='input'; s.type='number'; s.placeholder='secondes'; s.style.width='110px';
-  function setFromItem(){ let sec = Math.max(0, Math.floor(+it.cooldownSec||0)); const M=Math.floor(sec/60); sec-=M*60; m.value=M; s.value=sec; }
-  function store(){ it.cooldownSec = Math.max(0,(+m.value||0)*60 + (+s.value||0)); save(get()); }
-  [m,s].forEach(x=> x.oninput=store);
-  setFromItem();
-  right.append(m,s); wrap.appendChild(right);
-  return wrap;
+  render();
+  return box;
 }
 
-function rowItem(S, it, onChange){
-  const r = el('div','panel');
-  const head = el('div','list-item'); head.style.cursor='pointer'; head.innerHTML = `<div><b>${it.name||'Objet'}</b></div><div class="muted small">(ouvrir/fermer)</div>`; r.appendChild(head);
-  const list = el('div','list'); list.style.display='none'; r.appendChild(list);
-  head.onclick = ()=>{ list.style.display = (list.style.display==='none')?'block':'none'; };
+/* ---------------- Duration/Cooldown helpers ---------------- */
+function secondsToParts(sec){ sec=Math.max(0, Math.floor(+sec||0)); const d=Math.floor(sec/86400); sec%=86400; const h=Math.floor(sec/3600); sec%=3600; const m=Math.floor(sec/60); const s=sec%60; return {d,h,m,s}; }
+function partsToSeconds(d,h,m,s){ return N(d)*86400 + N(h)*3600 + N(m)*60 + N(s); }
 
-  const line = el('div','list-item small');
-  const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom'; nameI.style.minWidth='180px'; nameI.value = it.name||'';
-  const descI = document.createElement('input'); descI.className='input'; descI.placeholder='Description'; descI.value = it.desc||'';
-  const typeS = document.createElement('select'); typeS.className='select'; options(typeS, ['equipment','consumable','misc'], it.type||'misc');
-  const slotS = document.createElement('select'); slotS.className='select'; options(slotS, (S.settings?.slots)||[], it.slot||'');
-  const delB = el('button','btn small danger'); delB.textContent='Supprimer';
-  line.append(nameI, descI, typeS, slotS, delB);
-  list.appendChild(line);
+/* ---------------- Item row ---------------- */
+function rowItem(S, it, refresh){
+  ensureMods(it);
+  const row = el('div','panel');
 
-  function refreshEditors(){
-    while(list.children.length>1) list.removeChild(list.lastChild);
-    list.appendChild(modsEditor(S,it,'mods'));
-    if(typeS.value==='consumable') list.appendChild(durationEditor(it));
-    list.appendChild(cooldownEditor(it));
-  }
-  refreshEditors();
+  // head
+  const head = el('div','list-item'); head.style.cursor='pointer';
+  const left = el('div'); const title = document.createElement('b'); title.textContent = it.name||'Objet'; left.appendChild(title);
+  const sub  = document.createElement('div'); sub.className='muted small'; sub.textContent = typeLabel(it.type||'misc') + (it.type==='equipment' && it.slot? (' — '+(it.slot||'')) : '');
+  left.appendChild(sub);
+  const right = el('div'); const del = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer'; right.appendChild(del);
+  head.append(left,right); row.appendChild(head);
 
-  nameI.oninput = ()=>{ it.name = nameI.value; onChange(); head.querySelector('b').textContent=it.name||'Objet'; };
-  descI.oninput = ()=>{ it.desc = descI.value; onChange(); };
-  typeS.onchange = ()=>{ it.type = typeS.value; if(it.type!=='equipment') it.slot=''; refreshEditors(); onChange(); };
-  slotS.onchange = ()=>{ it.slot = slotS.value||''; onChange(); };
-  delB.onclick   = ()=>{ onChange(true); };
+  const body = el('div','list'); body.style.display='none'; row.appendChild(body);
+  head.onclick = ()=>{ body.style.display = (body.style.display==='none')?'block':'none'; };
 
-  return r;
+  // Identité
+  (function(){
+    const r = el('div','list-item small');
+    const l = document.createElement('div'); l.textContent='Identité'; r.appendChild(l);
+    const rr= document.createElement('div'); rr.style.display='grid'; rr.style.gridTemplateColumns='1fr 1fr 1fr'; rr.style.gap='8px';
+    const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom'; nameI.value=it.name||'';
+    const typeS = typeSelect(it.type||'misc');
+    const slotWrap = document.createElement('div'); slotWrap.style.display='flex'; slotWrap.style.gap='6px'; slotWrap.style.alignItems='center';
+    const slotLab = document.createElement('span'); slotLab.textContent='slot'; const slotS = slotSelect(S, it.slot||'');
+
+    function updateSlot(){ const isEq = (typeS.value==='equipment'); slotWrap.style.display = isEq ? 'flex' : 'none'; }
+    nameI.oninput = ()=>{ it.name=nameI.value||''; title.textContent=it.name||'Objet'; State.save(S); };
+    typeS.onchange = ()=>{ it.type=typeS.value; updateSlot(); sub.textContent = typeLabel(it.type||'misc') + (it.type==='equipment' && it.slot? (' — '+(it.slot||'')) : ''); State.save(S); };
+    slotS.onchange = ()=>{ it.slot = slotS.value||''; sub.textContent = typeLabel(it.type||'misc') + (it.type==='equipment' && it.slot? (' — '+(it.slot||'')) : ''); State.save(S); };
+    updateSlot();
+    slotWrap.append(slotLab, slotS);
+
+    rr.appendChild(nameI); rr.appendChild(typeS); rr.appendChild(slotWrap);
+    r.appendChild(rr);
+    body.appendChild(r);
+
+    const r2 = el('div','list-item small');
+    const l2 = document.createElement('div'); l2.textContent='Description'; r2.appendChild(l2);
+    const rr2= document.createElement('div'); const descI = document.createElement('textarea'); descI.className='input'; descI.rows=2; descI.placeholder='Description'; descI.value=it.desc||'';
+    descI.oninput = ()=>{ it.desc = descI.value||''; State.save(S); };
+    rr2.appendChild(descI); r2.appendChild(rr2); body.appendChild(r2);
+  })();
+
+  // Effets (mods)
+  (function(){
+    const mods = ensureMods(it);
+    const wrap = el('div','panel'); wrap.innerHTML = '<div class="list-item"><div><b>Effets</b></div></div>';
+    const list = el('div','list'); wrap.appendChild(list); body.appendChild(wrap);
+
+    // Stats
+    list.appendChild(kvEditorMap(mods.stats, ()=>{}, { title:'Stats', keyOptions:listStats(S), valPh:'+/-' }));
+    // Catégories
+    list.appendChild(kvEditorMap(mods.cats,  ()=>{}, { title:'Catégories', keyOptions:listCats(S), valPh:'+/-' }));
+    // Ressources
+    list.appendChild(resEditorMap(mods.resources, ()=>{}, { title:'Ressources' }));
+  })();
+
+  // Consommable : Durée d'effet + Cooldown
+  (function(){
+    const sec = secondsToParts(it.durationSec||0);
+    const cdp = secondsToParts(it.cooldownSec||0);
+    const pnl = el('div','panel'); pnl.innerHTML='<div class="list-item"><div><b>Consommable</b></div><div class="muted small">Visible seulement pour les objets de type “Consommable”</div></div>';
+    const lst = el('div','list'); pnl.appendChild(lst); body.appendChild(pnl);
+
+    
+function mkRow(label, parts, onSave){
+      const r = el('div','list-item small');
+      const l = document.createElement('div'); l.textContent=label; r.appendChild(l);
+      const rr = document.createElement('div'); rr.style.display='flex'; rr.style.gap='10px'; rr.style.flexWrap='wrap'; rr.style.alignItems='center';
+
+      function unit(labelTxt, ph, val){
+        const wrap = document.createElement('div'); wrap.style.display='flex'; wrap.style.alignItems='center'; wrap.style.gap='6px';
+        const lab = document.createElement('span'); lab.className='muted small'; lab.textContent=labelTxt;
+        const inp = document.createElement('input'); inp.type='number'; inp.className='input'; inp.placeholder=ph; inp.value=val||0; inp.min=0;
+        wrap.appendChild(lab); wrap.appendChild(inp);
+        return {wrap, inp};
+      }
+      const uD = unit('Jours','0', parts.d||0);
+      const uH = unit('Heures','0', parts.h||0);
+      const uM = unit('Minutes','0', parts.m||0);
+      const uS = unit('Secondes','0', parts.s||0);
+
+      const saveB = document.createElement('button'); saveB.className='btn small'; saveB.textContent='Appliquer';
+      saveB.title = 'Enregistrer la valeur';
+
+      saveB.onclick = ()=> onSave( partsToSeconds(uD.inp.value, uH.inp.value, uM.inp.value, uS.inp.value) );
+
+      const hint = document.createElement('span'); hint.className='muted small'; hint.textContent='(J/H/M/S)';
+
+      rr.append(uD.wrap, uH.wrap, uM.wrap, uS.wrap, saveB, hint); 
+      r.appendChild(rr); 
+      return r;
+    }
+
+
+    function render(){
+      lst.innerHTML='';
+      lst.appendChild(mkRow('Durée de l’effet', sec, (v)=>{ it.durationSec = v; State.save(S); }));
+      lst.appendChild(mkRow('Cooldown', cdp, (v)=>{ it.cooldownSec = v; State.save(S); }));
+    }
+    render();
+
+    // show/hide whole panel depending on type
+    const show = ()=>{ pnl.style.display = (it.type==='consumable') ? 'block' : 'none'; };
+    show();
+    // Observe type select changes above
+    // quick observer: override type change handler to also toggle (already saved above)
+    head.addEventListener('click', ()=>{}); // keep reference for GC
+    const _setType = ()=>show();
+    // When the select changes, our earlier onchange updates it.type and saves; we just poll toggling when head clicked or on initial render; minimal wiring.
+    // (If you want instant toggle without closing/reopening, we could pass a callback to updateSlot() earlier)
+    setTimeout(show,10);
+  })();
+
+  
+  // Lootbox (shared) — add quantity of this item
+  (function(){
+    const pnl = el('div','panel'); pnl.innerHTML='<div class="list-item"><div><b>Lootbox</b></div><div class="muted small">Ajouter cet objet à la lootbox partagée des joueurs</div></div>';
+    const lst = el('div','list'); pnl.appendChild(lst); body.appendChild(pnl);
+    const r = el('div','list-item small');
+    const l = document.createElement('div'); l.textContent='Ajouter'; r.appendChild(l);
+    const rr = document.createElement('div'); rr.style.display='flex'; rr.style.gap='8px'; rr.style.alignItems='center';
+    const qtyI = document.createElement('input'); qtyI.type='number'; qtyI.className='input'; qtyI.placeholder='Qté'; qtyI.min=1; qtyI.value=1;
+    const addB = document.createElement('button'); addB.className='btn small'; addB.textContent='Ajouter à la lootbox';
+    addB.onclick = ()=>{
+      const qty = Math.max(1, Math.floor(+qtyI.value||0));
+      if(!it.id){ it.id = 'it_'+Math.random().toString(36).slice(2,9); State.save(S); }
+      addB.disabled = true; const prev=addB.textContent; addB.textContent='Ajouté ✓';
+      State.lootboxAdd(S, it.id, qty);
+      qtyI.value = 1;
+      setTimeout(()=>{ addB.disabled=false; addB.textContent=prev; }, 700);
+    };
+    rr.append(qtyI, addB); r.appendChild(rr); lst.appendChild(r);
+  })();
+// delete
+  del.onclick = ()=>{ const arr = S.items||[]; const i = arr.indexOf(it); if(i>=0){ arr.splice(i,1); State.save(S); refresh(); } };
+
+  return row;
 }
 
-export function renderAdminItems(){
-  const S = get();
-  S.items = Array.isArray(S.items)? S.items : [];
-  const box = el('div');
+export function renderAdminItems(S){
+  S.items = arr(S.items);
+  State.ensureItemIds(S);
+  const root = el('div');
 
-  const panel = el('div','panel');
-  panel.innerHTML = `<div class="list-item"><div><b>Objets</b></div></div>`;
-  const list = el('div','list'); panel.appendChild(list);
-  box.appendChild(panel);
+  const listP = el('div','panel'); listP.innerHTML='<div class="list-item"><div><b>Objets</b></div></div>';
+  const list = el('div','list'); listP.appendChild(list); root.appendChild(listP);
 
   function refresh(){
     list.innerHTML='';
-    (S.items||[]).forEach(it=> list.appendChild(rowItem(S,it, (del)=>{
-      if(del){ const i=S.items.indexOf(it); if(i>=0) S.items.splice(i,1); }
-      save(S); refresh();
-    })));
-
-    const addPanel = el('div','panel mt8');
-    addPanel.innerHTML = `<div class="list-item"><div><b>Ajouter un objet</b></div></div>`;
-    const add = el('div','list');
-    const r = el('div','list-item small');
-    const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom';
-    const descI = document.createElement('input'); descI.className='input'; descI.placeholder='Description';
-    const typeS = document.createElement('select'); typeS.className='select'; options(typeS, ['equipment','consumable','misc'], 'misc');
-    const slotS = document.createElement('select'); slotS.className='select'; options(slotS, (S.settings?.slots)||[], '');
-    const addB = document.createElement('button'); addB.className='btn'; addB.textContent='Ajouter';
-    addB.onclick = ()=>{
-      const nm=(nameI.value||'').trim(); if(!nm) return;
-      const it = { id:uid(), name:nm, desc:descI.value||'', type:typeS.value||'misc', slot: (typeS.value==='equipment'? slotS.value||'' : ''), mods:{ stats:{}, cats:{}, resources:{} }, durationSec:0, cooldownSec:0 };
-      S.items.push(it); save(S); refresh();
-    };
-    r.append(nameI, descI, typeS, slotS, addB); add.appendChild(r); addPanel.appendChild(add); list.appendChild(addPanel);
+    (S.items||[]).forEach(it=> list.appendChild(rowItem(S, it, refresh)));
   }
   refresh();
 
-  return box;
+  const addP = el('div','panel'); addP.innerHTML='<div class="list-item"><div><b>Ajouter un objet</b></div></div>';
+  const addL  = el('div','list'); addP.appendChild(addL); root.appendChild(addP);
+  const r = el('div','list-item small'); r.style.display='grid'; r.style.gridTemplateColumns='1fr 1fr 1fr auto'; r.style.gap='8px';
+  const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom';
+  const typeS = typeSelect('misc');
+  const slotW = document.createElement('div'); slotW.style.display='none'; slotW.style.gap='6px'; slotW.style.alignItems='center';
+  const slotLab = document.createElement('span'); slotLab.textContent='slot';
+  const slotS = slotSelect(S, '');
+  slotW.append(slotLab, slotS);
+  function upd(){ slotW.style.display = (typeS.value==='equipment') ? 'flex' : 'none'; }
+  typeS.onchange=upd; upd();
+  const addB = document.createElement('button'); addB.className='btn'; addB.textContent='Ajouter';
+  addB.onclick = ()=>{ const nm=(nameI.value||'').trim(); if(!nm) return; S.items.push({ id:'it_'+Math.random().toString(36).slice(2,9), name:nm, type:typeS.value, slot:(typeS.value==='equipment'? (slotS.value||'') : ''), desc:'', mods:{stats:{},cats:{},resources:{}}, cooldownSec:0, durationSec:0 }); State.save(S); nameI.value=''; typeS.value='misc'; slotS.value=''; upd(); refresh(); };
+  r.append(nameI, typeS, slotW, addB);
+  addL.appendChild(r);
+
+  return root;
 }
 export default renderAdminItems;

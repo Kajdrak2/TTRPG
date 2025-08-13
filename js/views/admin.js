@@ -1,4 +1,4 @@
-// js/views/admin.js — Build A11 (ES5-friendly, tabs incl. Resources)
+// js/views/admin.js — Build A12 (tabs incl. Stats & Catégories)
 import { el } from '../core/ui.js';
 import * as State from '../core/state.js';
 
@@ -29,6 +29,8 @@ export function renderAdmin(){
 
   var defs = [
     { id:'sys',   label:'Systeme',    loader:function(){ return import('./admin_systems.js').then(function(m){ return (m.renderAdminSystems||m.default)(S); }); } },
+    { id:'players', label:'Joueurs',      loader:()=> import('./admin_players.js').then(m=> (m.renderAdminPlayers||m.default)(S)) },
+    { id:'stats', label:'Stats',      loader:function(){ return import('./admin_stats.js').then(function(m){ return (m.renderAdminStats||m.default)(S); }); } },
     { id:'races', label:'Races',      loader:function(){ return import('./admin_races.js').then(function(m){ return (m.renderAdminRaces||m.default)(S); }); } },
     { id:'trib',  label:'Tribus',     loader:function(){ return import('./admin_tribes.js').then(function(m){ return (m.renderAdminTribes||m.default)(S); }); } },
     { id:'class', label:'Classes',    loader:function(){ return import('./admin_classes.js').then(function(m){ return (m.renderAdminClasses||m.default)(S); }); } },
@@ -61,6 +63,4 @@ export function renderAdmin(){
 }
 export default renderAdmin;
 if(typeof window!=='undefined') window.renderAdmin = renderAdmin;
-
-// Back-compat
 export function renderAdminApp(){ return renderAdmin(); }

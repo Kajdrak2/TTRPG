@@ -1,196 +1,158 @@
-// js/views/admin_players.js
-// Patch 5.8.4 — Joueurs : accordéon par joueur, bonus/malus groupés par Catégorie -> Caractéristiques, accordéon Ressources
-import * as State from '../core/state.js';
+// js/views/admin_players.js — Build A1 (édition joueurs)
 import { el } from '../core/ui.js';
+import * as State from '../core/state.js';
 
-/* ---------- helpers ---------- */
-function getCategoryMap(S){
-  const map = {};
-  (S.settings?.categories||[]).forEach(c => { map[c.name] = Array.isArray(c.stats)? [...c.stats] : []; });
-  // rattrape stats orphelines si jamais
-  (S.settings?.stats||[]).forEach(st => {
-    const inAny = Object.values(map).some(list => list.includes(st));
-    if(!inAny){ (map.Autres = map.Autres || []).push(st); }
-  });
-  return map;
-}
-function selectFrom(list, current, onChange){
-  const s = document.createElement('select'); s.className='select';
-  const optNone = document.createElement('option'); optNone.value=''; optNone.textContent='—'; s.appendChild(optNone);
-  (list||[]).forEach(it=>{ const o=document.createElement('option'); o.value=it.name; o.textContent=it.name; if(it.name===(current||'')) o.selected=true; s.appendChild(o); });
-  s.onchange = (e)=> onChange && onChange(e.target.value || '');
-  return s;
-}
-function numberInput(value, onInput){
-  const n = document.createElement('input');
-  n.type='number'; n.step='1'; n.className='input'; n.style.width='120px'; n.value=String(+value||0);
-  n.addEventListener('input', ()=> onInput(Math.trunc(+n.value||0)));
-  return n;
-}
-function accordionPanel(titleLeft, titleRight){
-  const host = document.createElement('div'); host.className='panel';
-  const head = el('div','list-item'); head.style.cursor='pointer';
-  const left = document.createElement('div'); left.innerHTML = `<b>${titleLeft}</b>`;
-  const right = document.createElement('div'); right.className='muted small'; right.textContent = titleRight || 'cliquer pour ouvrir/fermer';
-  head.append(left, right);
-  const body = document.createElement('div'); body.className='inner'; body.style.display='none';
-  head.addEventListener('click', ()=>{ body.style.display = (body.style.display==='none') ? 'block' : 'none'; });
-  host.append(head, body);
-  return { host, head, body, left, right };
-}
+function N(v){ return isFinite(+v)? Math.trunc(+v) : 0; }
+function arr(a){ return Array.isArray(a)? a : []; }
+function ensureMods(p){ p.mods = p.mods && typeof p.mods==='object' ? p.mods : {}; p.mods.stats=p.mods.stats||{}; p.mods.cats=p.mods.cats||{}; p.mods.resources=p.mods.resources||{}; return p.mods; }
 
-/* ---------- resources utils ---------- */
-function getResourceDefs(S){
-  const out = [];
-  const R = S.resources;
-  if(Array.isArray(R)){
-    R.forEach(it=>{
-      if(typeof it === 'string') out.push({ name: it, min:0, max:0, start:0, scope:'global' });
-      else if(it && typeof it === 'object' && it.name) out.push({ name: it.name, min:+it.min||0, max:+it.max||0, start:+it.start||0, scope:it.scope||'global', appliesTo: it.appliesTo||{ races:[], tribes:[], classes:[] } });
+function listStats(S){ return (S.settings?.stats||[]).slice(); }
+function listCats(S){ return (S.settings?.categories||[]).map(c=>c.name); }
+function listRes(S){ return (S.resources||[]).map(r=>r.name||r.id); }
+
+function kvPanel(title, map, opts){
+  const keyOptions = opts.keyOptions||null;
+  const box = el('div','panel'); box.innerHTML='<div class="list-item"><div><b>'+title+'</b></div></div>';
+  const list = el('div','list'); box.appendChild(list);
+  function render(){
+    list.innerHTML='';
+    const keys = Object.keys(map||{});
+    if(!keys.length){ const empty=el('div','list-item small muted'); empty.textContent='(vide)'; list.appendChild(empty); }
+    keys.forEach(k=>{
+      const row = el('div','list-item small');
+      row.appendChild((()=>{ const d=document.createElement('div'); d.textContent=k; return d; })());
+      const r = document.createElement('div');
+      const inp = document.createElement('input'); inp.className='input'; inp.type='number'; inp.value=+map[k]||0;
+      const del = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer';
+      inp.oninput = ()=>{ map[k]=N(inp.value); State.save(State.get()); };
+      del.onclick = ()=>{ delete map[k]; State.save(State.get()); render(); };
+      r.append(inp, del); row.appendChild(r); list.appendChild(row);
     });
-  }else if(R && typeof R === 'object'){
-    Object.entries(R).forEach(([name,val])=>{
-      if(typeof val === 'object') out.push({ name, min:+val.min||0, max:+val.max||0, start:+val.start||0, scope:val.scope||'global', appliesTo: val.appliesTo||{ races:[], tribes:[], classes:[] } });
-      else out.push({ name, min:0, max:+val||0, start:0, scope:'global' });
-    });
+    const add = el('div','list-item small'); const l=document.createElement('div'); l.textContent='Ajouter'; add.appendChild(l);
+    const r = document.createElement('div'); r.style.display='flex'; r.style.gap='8px';
+    let keyI;
+    if(keyOptions){ keyI=document.createElement('select'); keyI.className='select'; const o0=document.createElement('option'); o0.value=''; o0.textContent='—'; keyI.appendChild(o0); keyOptions.forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; keyI.appendChild(o); }); }
+    else { keyI=document.createElement('input'); keyI.className='input'; keyI.placeholder='clé'; }
+    const valI=document.createElement('input'); valI.className='input'; valI.type='number'; valI.placeholder='+/-';
+    const btn=document.createElement('button'); btn.className='btn small'; btn.textContent='Ajouter';
+    btn.onclick = ()=>{ const k=(keyI.value||'').trim(); if(!k) return; map[k]=(map[k]||0)+N(valI.value); State.save(State.get()); render(); };
+    r.append(keyI, valI, btn); add.appendChild(r); list.appendChild(add);
   }
-  return out;
+  render(); return box;
 }
-function resourceAppliesToPlayer(r, p){
-  const scope = r.scope || 'global';
-  if(scope === 'global') return true;
-  const tgt = r.appliesTo || { races:[], tribes:[], classes:[] };
-  if(p.race && (tgt.races||[]).includes(p.race)) return true;
-  if(p.tribe && (tgt.tribes||[]).includes(p.tribe)) return true;
-  if(p.klass && (tgt.classes||[]).includes(p.klass)) return true;
-  return false;
-}
-
-/* ---------- rows ---------- */
-function catBonusRow(p, catName){
-  const row = el('div','list-item small');
-  row.append(document.createElement('div'), document.createElement('div'));
-  row.children[0].innerHTML = `<b>${catName}</b>`;
-  p.catBonusPoints = p.catBonusPoints || {};
-  row.children[1].appendChild(numberInput(p.catBonusPoints[catName], v=>{ p.catBonusPoints[catName]=v; State.save(State.get()); }));
-  return row;
-}
-function statBonusRow(p, statName){
-  const row = el('div','list-item small');
-  row.append(document.createElement('div'), document.createElement('div'));
-  row.children[0].innerHTML = `<b>${statName}</b>`;
-  p.statBonus = p.statBonus || {};
-  row.children[1].appendChild(numberInput(p.statBonus[statName], v=>{ p.statBonus[statName]=v; State.save(State.get()); }));
-  return row;
-}
-function resBonusRow(p, resName){
-  const row = el('div','list-item small');
-  row.append(document.createElement('div'), document.createElement('div'));
-  row.children[0].innerHTML = `<b>${resName}</b>`;
-  p.resourceMods = p.resourceMods || {};
-  const wrap = document.createElement('div'); wrap.className='row'; wrap.style.gap='8px';
-  const l1=document.createElement('span'); l1.className='muted small'; l1.textContent='ΔMax';
-  const maxI = numberInput(p.resourceMods[resName]?.max, v=>{ p.resourceMods[resName]=p.resourceMods[resName]||{}; p.resourceMods[resName].max=v; State.save(State.get()); });
-  const l2=document.createElement('span'); l2.className='muted small'; l2.textContent='ΔStart';
-  const startI = numberInput(p.resourceMods[resName]?.start, v=>{ p.resourceMods[resName]=p.resourceMods[resName]||{}; p.resourceMods[resName].start=v; State.save(State.get()); });
-  wrap.append(l1,maxI,l2,startI);
-  row.children[1].appendChild(wrap);
-  return row;
+function resPanel(title, map, options){
+  const box = el('div','panel'); box.innerHTML = '<div class="list-item"><div><b>'+title+'</b></div></div>';
+  const list = el('div','list'); box.appendChild(list);
+  function render(){
+    list.innerHTML='';
+    const keys = Object.keys(map||{});
+    if(!keys.length){ const empty=el('div','list-item small muted'); empty.textContent='(vide)'; list.appendChild(empty); }
+    keys.forEach(k=>{
+      const row = el('div','list-item small');
+      row.appendChild((()=>{ const d=document.createElement('div'); d.textContent=k; return d; })());
+      const r=document.createElement('div');
+      const maxI=document.createElement('input'); maxI.className='input'; maxI.type='number'; maxI.value=+(map[k]?.max)||0;
+      const startI=document.createElement('input'); startI.className='input'; startI.type='number'; startI.value=+(map[k]?.start)||0;
+      const del = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer';
+      maxI.oninput=()=>{ (map[k]||(map[k]={})).max=N(maxI.value); State.save(State.get()); };
+      startI.oninput=()=>{ (map[k]||(map[k]={})).start=N(startI.value); State.save(State.get()); };
+      del.onclick=()=>{ delete map[k]; State.save(State.get()); render(); };
+      r.append(maxI,startI,del); row.appendChild(r); list.appendChild(row);
+    });
+    const add = el('div','list-item small'); const l=document.createElement('div'); l.textContent='Ajouter'; add.appendChild(l);
+    const r=document.createElement('div'); r.style.display='flex'; r.style.gap='8px';
+    const sel=document.createElement('select'); sel.className='select'; const o0=document.createElement('option'); o0.value=''; o0.textContent='—'; sel.appendChild(o0);
+    (State.get().resources||[]).forEach(res=>{ const nm=res?.name||res?.id; if(!nm) return; const o=document.createElement('option'); o.value=nm; o.textContent=nm; sel.appendChild(o); });
+    const maxI=document.createElement('input'); maxI.className='input'; maxI.type='number'; maxI.placeholder='max +=';
+    const startI=document.createElement('input'); startI.className='input'; startI.type='number'; startI.placeholder='start +=';
+    const btn=document.createElement('button'); btn.className='btn small'; btn.textContent='Ajouter';
+    btn.onclick=()=>{ const k=sel.value; if(!k) return; const o=map[k]||{max:0,start:0}; o.max+=N(maxI.value); o.start+=N(startI.value); map[k]=o; State.save(State.get()); render(); };
+    r.append(sel,maxI,startI,btn); add.appendChild(r); list.appendChild(add);
+  }
+  render(); return box;
 }
 
-/* ---------- per-player panel ---------- */
-function playerPanel(S, p, onRefresh){
-  const catMap = getCategoryMap(S);
-  const ac = accordionPanel(p.name || '(sans nom)', 'cliquer pour ouvrir/fermer');
+function rowPlayer(S, p, refresh){
+  ensureMods(p);
+  const wrap = el('div','panel');
+  const head = el('div','list-item'); head.style.cursor='pointer';
+  head.innerHTML = '<div><b>'+(p.name||'Joueur')+'</b></div>';
+  wrap.appendChild(head);
+  const body = el('div','list'); body.style.display='none'; wrap.appendChild(body);
+  head.onclick = ()=>{ body.style.display = (body.style.display==='none')?'block':'none'; };
 
-  // Identité & points
-  const g = el('div','grid3');
-  const rName = el('div','list-item small'); rName.innerHTML='<div>Nom</div>';
-  const nameI = document.createElement('input'); nameI.className='input'; nameI.value=p.name||'';
-  nameI.oninput = (e)=>{ p.name=e.target.value; State.save(S); ac.left.innerHTML=`<b>${p.name||'(sans nom)'}</b>`; };
-  rName.appendChild(document.createElement('div')).appendChild(nameI);
-  g.appendChild(rName);
+  // Identité
+  (function(){
+    const row = el('div','list-item small');
+    const l = document.createElement('div'); l.textContent='Identité'; row.appendChild(l);
+    const r = document.createElement('div'); r.style.display='grid'; r.style.gridTemplateColumns='1fr 1fr 1fr 1fr'; r.style.gap='8px';
+    const nameI=document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom'; nameI.value=p.name||'';
+    const lvlI=document.createElement('input'); lvlI.className='input'; lvlI.type='number'; lvlI.placeholder='Niveau'; lvlI.value=+p.level||1;
+    const raceS=document.createElement('select'); raceS.className='select'; const r0=document.createElement('option'); r0.value=''; r0.textContent='— Race —'; raceS.appendChild(r0); (S.races||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; if(x.name===(p.race||'')) o.selected=true; raceS.appendChild(o); });
+    const clsS=document.createElement('select'); clsS.className='select'; const c0=document.createElement('option'); c0.value=''; c0.textContent='— Classe —'; clsS.appendChild(c0); (S.classes||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; if(x.name===(p.klass||'')) o.selected=true; clsS.appendChild(o); });
+    const triS=document.createElement('select'); triS.className='select'; const t0=document.createElement('option'); t0.value=''; t0.textContent='— Tribu —'; triS.appendChild(t0); (S.tribes||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; if(x.name===(p.tribe||'')) o.selected=true; triS.appendChild(o); });
 
-  const rLvl = el('div','list-item small'); rLvl.innerHTML='<div>Niveau</div>';
-  const lvlI = document.createElement('input'); lvlI.type='number'; lvlI.className='input'; lvlI.value=String(p.level||1);
-  lvlI.oninput = (e)=>{ p.level=Math.max(1, Math.trunc(+e.target.value||1)); State.save(S); };
-  rLvl.appendChild(document.createElement('div')).appendChild(lvlI);
-  g.appendChild(rLvl);
+    nameI.oninput = ()=>{ p.name=nameI.value||''; State.save(S); head.innerHTML='<div><b>'+(p.name||'Joueur')+'</b></div>'; };
+    lvlI.oninput  = ()=>{ p.level=Math.max(1,N(lvlI.value)); State.save(S); };
+    raceS.onchange= ()=>{ p.race=raceS.value||''; State.save(S); };
+    clsS.onchange = ()=>{ p.klass=clsS.value||''; State.save(S); };
+    triS.onchange = ()=>{ p.tribe=triS.value||''; State.save(S); };
 
-  const rPts = el('div','list-item small'); rPts.innerHTML='<div>Points libres</div>';
-  const ptsI = document.createElement('input'); ptsI.type='number'; ptsI.className='input'; ptsI.value=String(+p.bonusPoints||0);
-  ptsI.oninput = (e)=>{ p.bonusPoints=Math.max(0, Math.trunc(+e.target.value||0)); State.save(S); };
-  rPts.appendChild(document.createElement('div')).appendChild(ptsI);
-  g.appendChild(rPts);
+    r.append(nameI, lvlI, raceS, clsS, triS);
+    row.appendChild(r); body.appendChild(row);
+  })();
 
-  ac.body.appendChild(g);
+  // Points libres
+  (function(){
+    const row = el('div','list-item small');
+    row.appendChild((()=>{ const d=document.createElement('div'); d.innerHTML='<b>Points libres</b>'; return d; })());
+    const r=document.createElement('div'); const pts=document.createElement('input'); pts.type='number'; pts.className='input'; pts.value=+(p.bonusPoints||0);
+    pts.oninput=()=>{ p.bonusPoints=N(pts.value); State.save(S); };
+    r.appendChild(pts); row.appendChild(r); body.appendChild(row);
+  })();
 
-  // Race/Classe/Tribu
-  const g2 = el('div','grid3');
-  const rRace = el('div','list-item small'); rRace.innerHTML='<div>Race</div>';
-  rRace.appendChild(document.createElement('div')).appendChild(selectFrom(S.races, p.race||'', val=>{ p.race=val; State.save(S); }));
-  g2.appendChild(rRace);
-  const rClass = el('div','list-item small'); rClass.innerHTML='<div>Classe</div>';
-  rClass.appendChild(document.createElement('div')).appendChild(selectFrom(S.classes, p.klass||'', val=>{ p.klass=val; State.save(S); }));
-  g2.appendChild(rClass);
-  const rTribe = el('div','list-item small'); rTribe.innerHTML='<div>Tribu</div>';
-  rTribe.appendChild(document.createElement('div')).appendChild(selectFrom(S.tribes, p.tribe||'', val=>{ p.tribe=val; State.save(S); }));
-  g2.appendChild(rTribe);
-  ac.body.appendChild(g2);
+  // Bonus/Malus
+  body.appendChild(kvPanel('Stats (bonus/malus)', p.mods.stats, { keyOptions:listStats(S) }));
+  body.appendChild(kvPanel('Catégories (bonus/malus)', p.mods.cats, { keyOptions:listCats(S) }));
+  body.appendChild(resPanel('Ressources (ajustements)', p.mods.resources, {}));
 
-  // Accordéon Bonus/malus (Catégories & caractéristiques)
-  const acMods = accordionPanel('Bonus/malus (Catégories & caractéristiques)');
-  ac.body.appendChild(acMods.host);
+  // Inventaire rapide (ajout d'item par id)
+  (function(){
+    const row = el('div','list-item small');
+    const l = document.createElement('div'); l.textContent='Donner un objet'; row.appendChild(l);
+    const r = document.createElement('div'); r.style.display='flex'; r.style.gap='8px';
+    State.ensureItemIds(S);
+    const idI=document.createElement('select'); idI.className='select';
+    const o0=document.createElement('option'); o0.value=''; o0.textContent='— Objet —'; idI.appendChild(o0);
+    (S.items||[]).forEach(it=>{ if(!it?.id) return; const o=document.createElement('option'); o.value=it.id; o.textContent=it.name||('Objet '+it.id); idI.appendChild(o); });
+    const qtyI=document.createElement('input'); qtyI.className='input'; qtyI.type='number'; qtyI.placeholder='Qté'; qtyI.value=1; qtyI.min=1;
+    const btn=document.createElement('button'); btn.className='btn small'; btn.textContent='Donner';
+    btn.onclick=()=>{ const n=Math.max(1,N(qtyI.value)); for(let i=0;i<n;i++) State.addItemToPlayer(S,p, idI.value); };
+    r.append(idI, qtyI, btn); row.appendChild(r); body.appendChild(row);
+  })();
 
-  Object.entries(catMap).forEach(([catName, stats])=>{
-    const sub = accordionPanel(catName);
-    acMods.body.appendChild(sub.host);
-    // ligne catégorie
-    const listCat = el('div','list'); listCat.appendChild(catBonusRow(p, catName)); sub.body.appendChild(listCat);
-    // lignes caractéristiques
-    const listStats = el('div','list');
-    if(stats && stats.length){ stats.forEach(st => listStats.appendChild(statBonusRow(p, st))); }
-    else{ const e=el('div','muted small'); e.style.padding='6px 12px'; e.textContent='Aucune caractéristique dans cette catégorie.'; listStats.appendChild(e); }
-    sub.body.appendChild(listStats);
-  });
-
-  // Accordéon Bonus/malus (Ressources applicables)
-  const defs = getResourceDefs(S);
-  const applicable = defs.filter(r => resourceAppliesToPlayer(r, p)).map(r=>r.name);
-  const acRes = accordionPanel('Bonus/malus (Ressources)');
-  ac.body.appendChild(acRes.host);
-  const listR = el('div','list');
-  if(applicable.length===0){ const e=el('div','muted small'); e.style.padding='8px 12px'; e.textContent='Aucune ressource applicable.'; listR.appendChild(e); }
-  else { applicable.forEach(n => listR.appendChild(resBonusRow(p, n))); }
-  acRes.body.appendChild(listR);
-
-  return ac.host;
+  return wrap;
 }
 
-/* ---------- main ---------- */
-export function renderPlayers(S){
+export function renderAdminPlayers(S){
   const root = el('div');
-  S.players = S.players || [];
-  const toolbar = el('div','row'); toolbar.style.justifyContent='space-between'; toolbar.style.alignItems='center';
-  const tl = document.createElement('h3'); tl.textContent = 'Joueurs';
-  const tr = document.createElement('div');
-  const add = document.createElement('button'); add.className='btn'; add.textContent='Ajouter joueur';
-  add.onclick = ()=>{ S.players.push({ name:'Nouveau', level:1, bonusPoints:0, attrs:{}, spent:{}, tempSpent:{}, catBonusPoints:{}, statBonus:{}, resourceMods:{} }); State.save(S); refresh(); };
-  tr.appendChild(add);
-  toolbar.append(tl,tr);
-  root.appendChild(toolbar);
+  const pnl = el('div','panel'); pnl.innerHTML='<div class="list-item"><div><b>Joueurs</b></div></div>'; root.appendChild(pnl);
+  const list = el('div','list'); pnl.appendChild(list);
 
-  const container = el('div'); root.appendChild(container);
   function refresh(){
-    container.innerHTML='';
-    if(S.players.length===0){
-      const empty = el('div','muted small'); empty.style.padding='8px 12px'; empty.textContent='Aucun joueur encore.';
-      container.appendChild(empty);
-      return;
-    }
-    S.players.forEach(p => container.appendChild(playerPanel(S, p, refresh)));
+    list.innerHTML='';
+    (S.players||[]).forEach(p=> list.appendChild(rowPlayer(S,p,refresh)));
+
+    // Ajouter un joueur
+    const add=el('div','list-item small');
+    const l=document.createElement('div'); l.textContent='Ajouter'; add.appendChild(l);
+    const r=document.createElement('div'); r.style.display='flex'; r.style.gap='8px';
+    const nameI=document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom';
+    const addB=document.createElement('button'); addB.className='btn'; addB.textContent='Ajouter';
+    addB.onclick=()=>{ const nm=(nameI.value||'').trim(); if(!nm) return; (S.players=S.players||[]).push({ id:'p_'+Math.random().toString(36).slice(2,9), name:nm, level:1, bonusPoints:0, tempSpent:{}, spent:{}, mods:{stats:{},cats:{},resources:{}}, inv:[] }); State.save(S); refresh(); };
+    r.append(nameI, addB); add.appendChild(r); list.appendChild(add);
   }
   refresh();
   return root;
 }
-export default renderPlayers;
+export default renderAdminPlayers;

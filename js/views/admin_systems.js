@@ -1,71 +1,152 @@
-// js/views/admin_systems.js
+// js/views/admin_systems.js — Build SYS-A2 (toggles + points + méthodes + Attitudes min/max)
 import { el } from '../core/ui.js';
 import { save } from '../core/state.js';
 
-export function renderSystems(S){
+export function renderAdminSystems(S){
+  S.settings = S.settings && typeof S.settings==='object' ? S.settings : {};
+  S.dice = S.dice && typeof S.dice==='object' ? S.dice : {};
+  S.dice.methods = Array.isArray(S.dice.methods) ? S.dice.methods : [];
+  S.settings.attitudes = Array.isArray(S.settings.attitudes) ? S.settings.attitudes : [];
+
   const box = el('div');
-  box.innerHTML = `<h3>Système</h3>
-  <div class="grid3">
-    <label class="list-item small"><div>Activer Races</div><input type="checkbox" id="useR"></label>
-    <label class="list-item small"><div>Activer Tribus</div><input type="checkbox" id="useT"></label>
-    <label class="list-item small"><div>Activer Classes</div><input type="checkbox" id="useC"></label>
-  </div>
-  <div class="list mt8">
-    <label class="list-item small"><div>Points de Catégorie (activer)</div><input type="checkbox" id="useCatPts"></label>
-  </div>
-  <div class="panel">
-    <div class="list-item small"><div>Points par niveau (formule)</div><input id="ppl" class="input" placeholder="ex: 2 ou level+1" style="max-width:200px"></div>
-    <div class="muted small">Les points par niveau concernent les <b>caractéristiques</b>. Les points de <b>catégorie</b> sont gérés séparément (bonus par entité et par joueur si activé).</div>
-  </div>
-  <div class="panel">
-    <div class="list-item"><div><b>Méthodes de jets</b></div></div>
-    <div id="m-list" class="list"></div>
-    <div class="grid3 mt8">
-      <input class="input" id="m-label" placeholder="Nom de la méthode (ex. Test FOR)">
-      <input class="input" id="m-form" placeholder="Formule (ex. 1d20 + {FOR} + {Combat})">
-      <button class="btn" id="m-add">Ajouter</button>
-    </div>
-    <div class="muted small mt8">Variables possibles : toutes les <b>caractéristiques</b>, toutes les <b>catégories</b> (si activées), et <b>{level}</b>.</div>
-  </div>`;
 
-  setTimeout(()=>{
-    // toggles
-    const useR=box.querySelector('#useR'); const useT=box.querySelector('#useT'); const useC=box.querySelector('#useC');
-    useR.checked=!!S.settings.useRaces; useT.checked=!!S.settings.useTribes; useC.checked=!!S.settings.useClasses;
-    useR.onchange=()=>{S.settings.useRaces=useR.checked; save(S);} ;
-    useT.onchange=()=>{S.settings.useTribes=useT.checked; save(S);} ;
-    useC.onchange=()=>{S.settings.useClasses=useC.checked; save(S);} ;
+  // ---------- Header ----------
+  const title = document.createElement('h3'); title.textContent = 'Système'; box.appendChild(title);
 
-    const useCat=box.querySelector('#useCatPts'); useCat.checked=!!S.settings.useCategoryPoints;
-    useCat.onchange=()=>{ S.settings.useCategoryPoints=useCat.checked; save(S); };
+  // ---------- Toggles ----------
+  const togg = el('div','grid3');
+  function mkToggle(label, key){
+    const lab = document.createElement('label'); lab.className='list-item small';
+    const l = document.createElement('div'); l.textContent = label; lab.appendChild(l);
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = !!S.settings[key];
+    cb.onchange = ()=>{ S.settings[key] = cb.checked; save(S); };
+    lab.appendChild(cb);
+    return lab;
+  }
+  togg.appendChild(mkToggle('Activer Races',   'useRaces'));
+  togg.appendChild(mkToggle('Activer Tribus',  'useTribes'));
+  togg.appendChild(mkToggle('Activer Classes', 'useClasses'));
+  box.appendChild(togg);
 
-    // points per level
-    const ppl=box.querySelector('#ppl'); ppl.value=S.settings.pointsPerLevel||'2'; ppl.oninput=()=>{S.settings.pointsPerLevel=ppl.value; save(S);};
+  // category points toggle
+  const catWrap = el('div','list mt8');
+  const labCat = document.createElement('label'); labCat.className='list-item small';
+  const lcat = document.createElement('div'); lcat.textContent='Points de Catégorie (activer)'; labCat.appendChild(lcat);
+  const cbcat = document.createElement('input'); cbcat.type='checkbox'; cbcat.checked=!!S.settings.useCategoryPoints;
+  cbcat.onchange=()=>{ S.settings.useCategoryPoints = cbcat.checked; save(S); };
+  labCat.appendChild(cbcat);
+  catWrap.appendChild(labCat);
+  box.appendChild(catWrap);
 
-    // dice methods
-    const list = box.querySelector('#m-list');
-    function renderMethods(){
-      list.innerHTML='';
-      (S.dice?.methods||[]).forEach((m,idx)=>{
-        const row = el('div','list-item small');
-        const l = el('input','input'); l.value=m.label||''; l.oninput=()=>{ m.label=l.value; save(S); };
-        const f = el('input','input'); f.value=m.formula||''; f.oninput=()=>{ m.formula=f.value; save(S); };
-        const del = el('button','btn danger small'); del.textContent='Supprimer'; del.onclick=()=>{ S.dice.methods.splice(idx,1); save(S); renderMethods(); };
-        row.append(el('div').appendChild(l)||l, el('div').appendChild(f)||f, del);
-        list.appendChild(row);
-      });
+  // points per level
+  const pplPanel = el('div','panel');
+  const pplHead  = el('div','list-item'); pplHead.innerHTML='<div><b>Points / Niveau</b></div>'; pplPanel.appendChild(pplHead);
+  const pplBody  = el('div','list'); pplPanel.appendChild(pplBody);
+  const pplRow   = el('div','list-item small');
+  const pplL     = document.createElement('div'); pplL.textContent='Points gagnés par niveau';
+  const pplR     = document.createElement('div');
+  const pplI     = document.createElement('input'); pplI.className='input'; pplI.type='number'; pplI.value = +(S.settings.pointsPerLevel||0);
+  pplI.oninput = ()=>{ S.settings.pointsPerLevel = +pplI.value||0; save(S); };
+  pplR.appendChild(pplI); pplRow.appendChild(pplL); pplRow.appendChild(pplR); pplBody.appendChild(pplRow);
+  box.appendChild(pplPanel);
+
+  // ---------- Attitudes (Disposition -> Attitude) ----------
+  const attPanel = el('div','panel mt16');
+  const attHead  = el('div','list-item'); attHead.innerHTML = '<div><b>Disposition & Attitudes</b></div>'; attPanel.appendChild(attHead);
+  const attList  = el('div','list'); attPanel.appendChild(attList);
+  const attAdd   = el('div','list-item small');
+  const attL     = document.createElement('div'); attL.textContent='Ajouter une attitude'; attAdd.appendChild(attL);
+  const attR     = document.createElement('div'); attR.className='row'; attR.style.gap='8px';
+  const attName  = document.createElement('input'); attName.className='input'; attName.placeholder='Nom (ex. Hostile)';
+  const attMin   = document.createElement('input'); attMin.className='input'; attMin.type='number'; attMin.placeholder='Min (vide = -∞)';
+  const attMax   = document.createElement('input'); attMax.className='input'; attMax.type='number'; attMax.placeholder='Max (vide = +∞)';
+  const attBtn   = document.createElement('button'); attBtn.className='btn'; attBtn.textContent='Ajouter';
+  attR.append(attName, attMin, attMax, attBtn); attAdd.appendChild(attR);
+  const attHelp  = document.createElement('div'); attHelp.className='muted small mt4';
+  attHelp.textContent = 'Règle : on prend l’attitude dont le seuil min est le plus élevé ≤ Disposition, et ≤ max si défini. Min vide = -∞, Max vide = +∞.';
+  attAdd.appendChild(attHelp);
+  attPanel.appendChild(attAdd);
+  box.appendChild(attPanel);
+
+  function sortAtts(){ S.settings.attitudes.sort((a,b)=> ((a && (a.min===''||a.min==null)?-Infinity:+a.min) - ((b && (b.min===''||b.min==null)?-Infinity:+b.min)) )); }
+
+  function renderAtts(){
+    sortAtts();
+    attList.innerHTML='';
+    if(!S.settings.attitudes.length){
+      const empty = el('div','list-item small muted'); empty.textContent='Aucune attitude'; attList.appendChild(empty);
+      return;
     }
-    renderMethods();
+    S.settings.attitudes.forEach((att, idx)=>{
+      const row = el('div','list-item small');
+      const left = document.createElement('div');
+      const nmI  = document.createElement('input'); nmI.className='input'; nmI.placeholder='Nom'; nmI.value=att.name||'';
+      nmI.oninput=()=>{ att.name = nmI.value||''; save(S); };
+      left.appendChild(nmI);
+      const right = document.createElement('div'); right.className='row'; right.style.gap='8px';
+      const minI = document.createElement('input'); minI.className='input'; minI.type='number'; minI.placeholder='Min (vide = -∞)';
+      minI.value = (att.min===''||att.min==null) ? '' : String(att.min);
+      minI.oninput=()=>{ att.min = (minI.value===''? null : +minI.value); save(S); };
+      const maxI = document.createElement('input'); maxI.className='input'; maxI.type='number'; maxI.placeholder='Max (vide = +∞)';
+      maxI.value = (att.max===''||att.max==null) ? '' : String(att.max);
+      maxI.oninput=()=>{ att.max = (maxI.value===''? null : +maxI.value); save(S); };
+      const up   = document.createElement('button'); up.className='btn small secondary'; up.textContent='↑';
+      const down = document.createElement('button'); down.className='btn small secondary'; down.textContent='↓';
+      const del  = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer';
+      up.onclick = ()=>{ if(idx>0){ const a=S.settings.attitudes[idx-1]; S.settings.attitudes[idx-1]=S.settings.attitudes[idx]; S.settings.attitudes[idx]=a; save(S); renderAtts(); } };
+      down.onclick = ()=>{ if(idx<S.settings.attitudes.length-1){ const a=S.settings.attitudes[idx+1]; S.settings.attitudes[idx+1]=S.settings.attitudes[idx]; S.settings.attitudes[idx]=a; save(S); renderAtts(); } };
+      del.onclick = ()=>{ S.settings.attitudes.splice(idx,1); save(S); renderAtts(); };
+      right.append(minI, maxI, up, down, del);
+      row.append(left, right);
+      attList.appendChild(row);
+    });
+  }
+  renderAtts();
+  attBtn.onclick = ()=>{
+    const nm=(attName.value||'').trim(); if(!nm) return;
+    const mn=attMin.value===''? null : +attMin.value;
+    const mx=attMax.value===''? null : +attMax.value;
+    S.settings.attitudes.push({name:nm, min:mn, max:mx});
+    save(S); attName.value=''; attMin.value=''; attMax.value=''; renderAtts();
+  };
 
-    box.querySelector('#m-add').onclick=()=>{
-      const l=(box.querySelector('#m-label').value||'').trim(); const f=(box.querySelector('#m-form').value||'').trim();
-      if(!l||!f) return;
-      (S.dice.methods=S.dice.methods||[]).push({label:l, formula:f});
-      save(S); renderMethods();
-      box.querySelector('#m-label').value=''; box.querySelector('#m-form').value='';
-    };
-  });
+  // ---------- Méthodes de dés ----------
+  const methPanel = el('div','panel mt16');
+  const methHead  = el('div','list-item'); methHead.innerHTML = '<div><b>Méthodes de jets</b></div>'; methPanel.appendChild(methHead);
+  const methList  = el('div','list'); methPanel.appendChild(methList);
+  const methAdd   = el('div','list-item small');
+  const mL = document.createElement('input'); mL.className='input'; mL.placeholder='Nom de la méthode (ex. Test FOR)';
+  const mF = document.createElement('input'); mF.className='input'; mF.placeholder='Formule (ex. 1d20 + {FOR} + {Combat})';
+  const mB = document.createElement('button'); mB.className='btn'; mB.textContent='Ajouter';
+  methAdd.appendChild(mL); methAdd.appendChild(mF); methAdd.appendChild(mB);
+  methPanel.appendChild(methAdd);
+  const mHelp = document.createElement('div'); mHelp.className='muted small mt8';
+  mHelp.textContent = 'Variables possibles : toutes les {STAT} de S.settings.stats, les catégories, et {level}.';
+  methPanel.appendChild(mHelp);
+  box.appendChild(methPanel);
+
+  function renderMethods(){
+    methList.innerHTML='';
+    (S.dice.methods||[]).forEach((m,idx)=>{
+      const row = el('div','list-item small');
+      const l1  = document.createElement('input'); l1.className='input'; l1.value = m.label||''; l1.oninput=()=>{ m.label=l1.value; save(S); };
+      const l2  = document.createElement('input'); l2.className='input'; l2.value = m.formula||''; l2.oninput=()=>{ m.formula=l2.value; save(S); };
+      const up  = document.createElement('button'); up.className='btn small secondary'; up.textContent='↑';
+      const down= document.createElement('button'); down.className='btn small secondary'; down.textContent='↓';
+      const del = document.createElement('button'); del.className='btn small danger'; del.textContent='Supprimer';
+      up.onclick   = ()=>{ if(idx>0){ const t=S.dice.methods[idx-1]; S.dice.methods[idx-1]=S.dice.methods[idx]; S.dice.methods[idx]=t; save(S); renderMethods(); } };
+      down.onclick = ()=>{ if(idx<S.dice.methods.length-1){ const t=S.dice.methods[idx+1]; S.dice.methods[idx+1]=S.dice.methods[idx]; S.dice.methods[idx]=t; save(S); renderMethods(); } };
+      del.onclick  = ()=>{ S.dice.methods.splice(idx,1); save(S); renderMethods(); };
+      row.append(l1,l2,up,down,del);
+      methList.appendChild(row);
+    });
+  }
+  renderMethods();
+  mB.onclick = ()=>{
+    const l=(mL.value||'').trim(), f=(mF.value||'').trim(); if(!l||!f) return;
+    S.dice.methods.push({label:l, formula:f}); save(S); mL.value=''; mF.value=''; renderMethods();
+  };
 
   return box;
 }
-export default renderSystems;
+export default renderAdminSystems;
