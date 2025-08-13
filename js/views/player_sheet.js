@@ -71,6 +71,64 @@ function makeSelect(options, current){
 
 export function renderPlayerSheet(S){
   const p = (S.players||[])[0];
+  // If no player exists yet, allow self-creation (first visit / private browsing)
+  if(!p){
+    const box = el('div');
+    const pnl = el('div','panel'); const head = el('div','list-item'); head.innerHTML = '<div><b>Créer mon personnage</b></div>'; pnl.appendChild(head); box.appendChild(pnl);
+    const list = el('div','list'); pnl.appendChild(list);
+
+    const rowName = el('div','list-item small'); rowName.innerHTML = '<div>Nom</div>';
+    const nameI = document.createElement('input'); nameI.className='input'; nameI.placeholder='Nom du personnage';
+    rowName.appendChild(el('div')).appendChild(nameI); list.appendChild(rowName);
+
+    // R/T/C (affichés uniquement si activés)
+    const st = S.settings||{};
+    let raceS=null, tribeS=null, classS=null;
+
+    if(st.useRaces){
+      const r = el('div','list-item small'); r.innerHTML = '<div>Race</div>';
+      raceS = document.createElement('select'); raceS.className='select';
+      const ro0=document.createElement('option'); ro0.value=''; ro0.textContent='—'; raceS.appendChild(ro0);
+      (S.races||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; raceS.appendChild(o); });
+      r.appendChild(el('div')).appendChild(raceS); list.appendChild(r);
+    }
+    if(st.useTribes){
+      const r = el('div','list-item small'); r.innerHTML = '<div>Tribu</div>';
+      tribeS = document.createElement('select'); tribeS.className='select';
+      const to0=document.createElement('option'); to0.value=''; to0.textContent='—'; tribeS.appendChild(to0);
+      (S.tribes||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; tribeS.appendChild(o); });
+      r.appendChild(el('div')).appendChild(tribeS); list.appendChild(r);
+    }
+    if(st.useClasses){
+      const r = el('div','list-item small'); r.innerHTML = '<div>Classe</div>';
+      classS = document.createElement('select'); classS.className='select';
+      const co0=document.createElement('option'); co0.value=''; co0.textContent='—'; classS.appendChild(co0);
+      (S.classes||[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.name; o.textContent=x.name; classS.appendChild(o); });
+      r.appendChild(el('div')).appendChild(classS); list.appendChild(r);
+    }
+
+    const actions = el('div','list-item small');
+    const createB = document.createElement('button'); createB.className='btn'; createB.textContent='Créer';
+    actions.appendChild(document.createElement('div'));
+    actions.lastChild.appendChild(createB); list.appendChild(actions);
+
+    createB.onclick = ()=>{
+      const name=(nameI.value||'').trim()||'Sans-nom';
+      const np = { id:'p_'+Math.random().toString(36).slice(2,9), name, level:1, bonusPoints:0,
+        tempSpent:{}, spent:{}, mods:{stats:{},cats:{},resources:{}}, inv:[], identityLocked:false };
+      if(raceS) np.race = raceS.value||'';
+      if(tribeS) np.tribe = tribeS.value||'';
+      if(classS) np.klass = classS.value||'';
+      (S.players=S.players||[]).push(np);
+      State.save(S);
+      // Re-render full sheet in place
+      const node = renderPlayerSheet(S);
+      box.replaceWith(node);
+    };
+
+    return box;
+  }
+
   const box = el('div');
 
   if(!p){
@@ -98,11 +156,9 @@ export function renderPlayerSheet(S){
   rLvl.appendChild(el('div')).appendChild(lvlI);
   g1.appendChild(rLvl);
 
-    // Sélecteurs potentiels (R/T/C)
-  let raceS = null, clsS = null, triS = null;
-// Race
+  // Race
   const rRace = el('div','list-item small'); rRace.innerHTML = '<div>Race</div>';
-  raceS = makeSelect(S.races, p?.race||''); raceS.id='p-race'; if(raceS) raceS.disabled = !!(p.identityLocked && (p?.race||'').trim());
+  const raceS = makeSelect(S.races, p?.race||''); raceS.id='p-race'; if(p.identityLocked && (p?.race||'')!=='') raceS.disabled=true;
   rRace.appendChild(el('div')).appendChild(raceS);
   g1.appendChild(rRace);
   idCard.appendChild(g1);
@@ -110,22 +166,14 @@ export function renderPlayerSheet(S){
   const g2 = el('div','grid3');
   // Classe
   const rClass = el('div','list-item small'); rClass.innerHTML = '<div>Classe</div>';
-  clsS  = makeSelect(S.classes, p?.klass||''); clsS.id='p-class'; if(clsS) clsS.disabled = !!(p.identityLocked && (p?.klass||'').trim());
+  const clsS  = makeSelect(S.classes, p?.klass||''); clsS.id='p-class'; if(p.identityLocked) clsS.disabled=true;
   rClass.appendChild(el('div')).appendChild(clsS);
   g2.appendChild(rClass);
 
   // Tribu
   const rTribe = el('div','list-item small'); rTribe.innerHTML = '<div>Tribu</div>';
-  triS  = makeSelect(S.tribes, p?.tribe||''); triS.id='p-tribe'; if(triS) triS.disabled = !!(p.identityLocked && (p?.tribe||'').trim());
+  const triS  = makeSelect(S.tribes, p?.tribe||''); triS.id='p-tribe'; if(p.identityLocked) triS.disabled=true;
   rTribe.appendChild(el('div')).appendChild(triS);
-  // Respect des activations Système
-  const useR = !!(S.settings && S.settings.useRaces);
-  const useC = !!(S.settings && S.settings.useClasses);
-  const useT = !!(S.settings && S.settings.useTribes);
-  if(!useR && typeof rRace!=='undefined' && rRace) rRace.style.display='none';
-  if(!useC && typeof rClass!=='undefined' && rClass) rClass.style.display='none';
-  if(!useT && typeof rTribe!=='undefined' && rTribe) rTribe.style.display='none';
-
   g2.appendChild(rTribe);
 
   // Bouton valider identité
@@ -136,7 +184,7 @@ export function renderPlayerSheet(S){
     actWrap.appendChild(ok);
   }else{
     const lockB = document.createElement('button'); lockB.className='btn'; lockB.id='lockId'; lockB.textContent="Valider l'identité";
-    lockB.onclick = ()=>{ p.identityLocked=true; State.save(S); renderStats(); nameI.disabled=true; if(raceS) raceS.disabled=true; if(clsS) clsS.disabled=true; if(triS) triS.disabled=true; rAct.querySelector('button')?.remove(); actWrap.textContent='Identité validée'; };
+    lockB.onclick = ()=>{ p.identityLocked=true; State.save(S); renderStats(); nameI.disabled=true; raceS.disabled=true; clsS.disabled=true; triS.disabled=true; rAct.querySelector('button')?.remove(); actWrap.textContent='Identité validée'; };
     actWrap.appendChild(lockB);
   }
   rAct.appendChild(actWrap);
@@ -147,9 +195,9 @@ export function renderPlayerSheet(S){
 
   // handlers
   nameI.oninput = e=>{ if(p.identityLocked) return; p.name=e.target.value; State.save(S); };
-  if(raceS) raceS.onchange = e=>{ if(p.identityLocked && (p?.race||'').trim()) return; p.race=e.target.value; State.save(S); renderStats(); };
-  clsS.onchange  = e=>{ if(p.identityLocked && (p?.klass||'').trim()) return; p.klass=e.target.value; State.save(S); renderStats(); };
-  triS.onchange  = e=>{ if(p.identityLocked && (p?.tribe||'').trim()) return; p.tribe=e.target.value; State.save(S); renderStats(); };
+  raceS.onchange = e=>{ if(p.identityLocked && (p?.race||'')!=='') return; p.race=e.target.value; State.save(S); renderStats(); };
+  clsS.onchange  = e=>{ if(p.identityLocked && (p?.klass||'')!=='') return; p.klass=e.target.value; State.save(S); renderStats(); };
+  triS.onchange  = e=>{ if(p.identityLocked && (p?.tribe||'')!=='') return; p.tribe=e.target.value; State.save(S); renderStats(); };
 
   // ----- Ressources (jauges) -----
   const resRoot = el('div'); resRoot.id='resources'; box.appendChild(resRoot);

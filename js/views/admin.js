@@ -1,60 +1,58 @@
-// js/views/admin.js — Build A12 (tabs incl. Stats & Catégories)
+// js/views/admin.js — Build C2 (tous onglets restaurés)
 import { el } from '../core/ui.js';
 import * as State from '../core/state.js';
 
 function tabButton(def, active){
-  var b = el('button','btn secondary tab' + (active ? ' active' : ''));
+  const b = el('button','btn secondary tab' + (active ? ' active' : ''));
   b.textContent = def.label;
   b.dataset.id = def.id;
   return b;
 }
 function mountLoader(panel, loader){
   panel.innerHTML = '<div class="muted small">Chargement...</div>';
-  Promise.resolve().then(function(){ return loader(); }).then(function(node){
-    panel.innerHTML='';
+  Promise.resolve().then(()=> loader()).then(node=>{
+    panel.innerHTML = '';
     if(node && node.nodeType===1) panel.appendChild(node);
     else panel.textContent='(contenu vide)';
-  }).catch(function(err){
+  }).catch(err=>{
     console.error('[Admin loader error]', err);
-    var msg = '[Admin loader error] ' + (err && err.message ? err.message : String(err));
+    const msg = '[Admin loader error] ' + (err && err.message ? err.message : String(err));
     panel.innerHTML = '<div class="error">'+ msg +'</div>';
   });
 }
 
 export function renderAdmin(){
-  var S = State.get();
-  var root = el('div');
-  var tabs = el('div','row'); tabs.style.gap='8px';
-  var panel = el('div'); panel.style.marginTop='12px';
+  const S = State.get();
+  const root = el('div');
+  const tabs = el('div','row'); tabs.style.gap='8px'; tabs.style.flexWrap='wrap';
+  const panel = el('div'); panel.style.marginTop='12px';
 
-  var defs = [
-    { id:'sys',   label:'Systeme',    loader:function(){ return import('./admin_systems.js').then(function(m){ return (m.renderAdminSystems||m.default)(S); }); } },
-    { id:'players', label:'Joueurs',      loader:()=> import('./admin_players.js').then(m=> (m.renderAdminPlayers||m.default)(S)) },
-    { id:'stats', label:'Stats',      loader:function(){ return import('./admin_stats.js').then(function(m){ return (m.renderAdminStats||m.default)(S); }); } },
-    { id:'races', label:'Races',      loader:function(){ return import('./admin_races.js').then(function(m){ return (m.renderAdminRaces||m.default)(S); }); } },
-    { id:'trib',  label:'Tribus',     loader:function(){ return import('./admin_tribes.js').then(function(m){ return (m.renderAdminTribes||m.default)(S); }); } },
-    { id:'class', label:'Classes',    loader:function(){ return import('./admin_classes.js').then(function(m){ return (m.renderAdminClasses||m.default)(S); }); } },
-    { id:'res',   label:'Ressources', loader:function(){ return import('./admin_resources.js').then(function(m){ return (m.renderAdminResources||m.default)(S); }); } },
-    { id:'best',  label:'Bestiaire',  loader:function(){ return import('./admin_bestiaire.js').then(function(m){ return (m.renderAdminBestiaire||m.default)(S); }); } },
-    { id:'tim',   label:'Timers',     loader:function(){ return import('./admin_timers.js').then(function(m){ return (m.renderAdminTimers||m.default)(S); }); } },
-    { id:'lore',  label:'Lore',       loader:function(){ return import('./admin_lore.js').then(function(m){ return (m.renderAdminLore||m.default)(S); }); } },
-    { id:'items', label:'Objets',     loader:function(){ return import('./admin_items.js').then(function(m){ return (m.renderAdminItems||m.default)(S); }); } },
-    { id:'mj',    label:'Messagerie', loader:function(){ return import('./admin_mj.js').then(function(m){ return (m.renderAdminMJ||m.default)(S); }); } },
-    { id:'comb',  label:'Combat',     loader:function(){ return import('./admin_combat.js').then(function(m){ return (m.renderAdminCombat||m.default)(S); }); } }
+  const defs = [
+    { id:'sys',     label:'Système',    loader:()=> import('./admin_systems.js').then(m=> (m.renderAdminSystems||m.default)(S)) },
+    { id:'races',   label:'Races',      loader:()=> import('./admin_races.js').then(m=> (m.renderAdminRaces||m.default)(S)) },
+    { id:'tribes',  label:'Tribus',     loader:()=> import('./admin_tribes.js').then(m=> (m.renderAdminTribes||m.default)(S)) },
+    { id:'classes', label:'Classes',    loader:()=> import('./admin_classes.js').then(m=> (m.renderAdminClasses||m.default)(S)) },
+    { id:'stats',   label:'Stats',      loader:()=> import('./admin_stats.js').then(m=> (m.renderAdminStats||m.default)(S)) },
+    { id:'res',     label:'Ressources', loader:()=> import('./admin_resources.js').then(m=> (m.renderAdminResources||m.default)(S)) },
+    { id:'items',   label:'Objets',     loader:()=> import('./admin_items.js').then(m=> (m.renderAdminItems||m.default)(S)) },
+    { id:'best',    label:'Bestiaire',  loader:()=> import('./admin_bestiaire.js').then(m=> (m.renderAdminBestiaire||m.default)(S)) },
+    { id:'timers',  label:'Timers',     loader:()=> import('./admin_timers.js').then(m=> (m.renderAdminTimers||m.default)(S)) },
+    { id:'players', label:'Joueurs',    loader:()=> import('./admin_players.js').then(m=> (m.renderAdminPlayers||m.default)(S)) },
+    { id:'lore',    label:'Lore',       loader:()=> import('./admin_lore.js').then(m=> (m.renderAdminLore||m.default)(S)) },
+    { id:'slots',   label:'Slots',      loader:()=> import('./admin_slots.js').then(m=> (m.renderAdminSlots||m.default)(S)) },
+    // { id:'messages', label:'Messagerie', loader:()=> import('./admin_messages.js').then(m=> (m.renderAdminMessages||m.default)(S)) }, // à réintroduire quand le state supportera la messagerie
+    // { id:'combat',    label:'Combat',    loader:()=> import('./admin_combat.js').then(m=> (m.renderAdminCombat||m.default)(S)) },
   ];
 
-  for(var i=0;i<defs.length;i++){
-    (function(d, isFirst){
-      var b = tabButton(d, isFirst);
-      b.onclick = function(){
-        var t = tabs.querySelectorAll('.tab');
-        for(var j=0;j<t.length;j++){ t[j].classList.remove('active'); }
-        b.classList.add('active');
-        mountLoader(panel, d.loader);
-      };
-      tabs.appendChild(b);
-    })(defs[i], i===0);
-  }
+  defs.forEach((d,i)=>{
+    const b = tabButton(d, i===0);
+    b.onclick = ()=>{
+      [...tabs.children].forEach(x=> x.classList.remove('active'));
+      b.classList.add('active');
+      mountLoader(panel, d.loader);
+    };
+    tabs.appendChild(b);
+  });
 
   root.appendChild(tabs);
   root.appendChild(panel);
@@ -62,5 +60,4 @@ export function renderAdmin(){
   return root;
 }
 export default renderAdmin;
-if(typeof window!=='undefined') window.renderAdmin = renderAdmin;
 export function renderAdminApp(){ return renderAdmin(); }
